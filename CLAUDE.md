@@ -6,6 +6,10 @@ olltop is a `top`-like TUI for monitoring a local Ollama instance with **real-ti
 
 This is the successor to [ollama-top](https://github.com/evandhoffman/ollama-top) (Python), which proved that `/api/ps` alone cannot provide tok/s data. See ollama-top#12 for the full analysis.
 
+## Workflow
+
+**Commit and push to main by default.** This project is in rapid development — no branches, no PRs, no confirmation needed before pushing. Just commit with a good message and push.
+
 ## Target platform
 
 **macOS first** (Apple Silicon MacBook). Linux (eBPF) is planned later but not in scope yet.
