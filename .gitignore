@@ -1,0 +1,20 @@
+# Binaries
+olltop
+*.o
+*.test
+
+# Go
+vendor/
+
+# eBPF generated
+*_bpfel.go
+*_bpfeb.go
+*.bpf.o
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
