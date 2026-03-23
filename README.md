@@ -1,71 +1,108 @@
 # olltop
 
-Real-time tokens/sec monitor for [Ollama](https://ollama.com) using eBPF (Linux) and pcap (macOS).
+A `top`-like terminal UI for monitoring [Ollama](https://ollama.com) with real-time tokens/sec display.
 
-## Motivation
+![macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-blue)
+![Go](https://img.shields.io/badge/language-Go-00ADD8)
+[![Release](https://img.shields.io/github/v/release/evandhoffman/olltop)](https://github.com/evandhoffman/olltop/releases)
 
-Ollama's `/api/ps` endpoint shows loaded models but not throughput. The actual tok/s metrics (`eval_count`, `eval_duration`) are only available in the streaming response body of `/api/generate` and `/api/chat`. Without proxying, the only way to observe these is at the kernel/packet level.
+## What it shows
 
-See [ollama-top#12](https://github.com/evandhoffman/ollama-top/issues/12) for the full analysis of why a pure-API approach can't work.
+- **Loaded models** — name, size, VRAM, expiry countdown
+- **Tokens/sec** — generation and prompt eval throughput (requires root)
+- **Sparkline history** — 5-minute sliding window with max tracker
+- **System metrics** — CPU and RAM utilization
+- **Status** — running/idle per model based on capture activity
 
 ## How it works
 
-**olltop** passively observes Ollama's HTTP traffic to extract token throughput, without proxying or modifying Ollama in any way.
+olltop passively captures Ollama's HTTP responses on the loopback interface using libpcap. When a response completes, the final `"done":true` JSON chunk contains `eval_count` and `eval_duration` — olltop extracts these to compute tok/s.
 
-| Platform | Capture method | Requirement |
+No proxying, no interception, no modification to Ollama.
+
+| Data | Source | Requires root? |
 |---|---|---|
-| Linux | eBPF — traces `write()` syscalls from the Ollama process | `CAP_BPF` + `CAP_PERFMON` (or root) |
-| macOS | libpcap — captures loopback traffic on port 11434 | root |
+| Loaded models, VRAM, expiry | `GET /api/ps` (polled every 1s) | No |
+| Ollama version | `GET /api/version` | No |
+| Generation tok/s | pcap: `eval_count / eval_duration` | **Yes** |
+| Prompt eval tok/s | pcap: `prompt_eval_count / prompt_eval_duration` | **Yes** |
+| CPU %, RAM | gopsutil | No |
 
-Both backends look for the final streaming response chunk containing `"done":true` and extract `eval_count` / `eval_duration` to compute real tok/s.
+## Installation
 
-In addition to tok/s, olltop polls `/api/ps` for:
-- Loaded models, VRAM usage, expiry countdowns
-- Running/idle status
+### Download binary
 
-And uses OS APIs for:
-- CPU and RAM utilization
+Grab the latest release from [GitHub Releases](https://github.com/evandhoffman/olltop/releases):
 
-## Planned architecture
-
-```
-olltop
-├── cmd/olltop/              # main, CLI flags
-├── internal/
-│   ├── capture/
-│   │   ├── capture.go       # CaptureBackend interface
-│   │   ├── ebpf_linux.go    # Linux: trace Ollama write() via cilium/ebpf
-│   │   ├── ebpf_linux.c     # eBPF program source
-│   │   └── pcap_darwin.go   # macOS: libpcap on lo0
-│   ├── ollama/
-│   │   └── client.go        # /api/ps, /api/version polling
-│   ├── metrics/
-│   │   └── aggregator.go    # combine capture + polling, rolling tok/s
-│   └── tui/
-│       └── app.go           # bubbletea TUI
-├── go.mod
-└── Makefile
+```bash
+chmod +x olltop-darwin-arm64
+sudo ./olltop-darwin-arm64
 ```
 
-## Key design decisions
+### Build from source
 
-- **Passive observation** — no proxy, no traffic interception, no modification to Ollama
-- **Elevated privileges required** — eBPF and pcap both need root-level access; this is an inherent requirement, not a design choice
-- **Graceful degradation** — without root, falls back to `/api/ps`-only mode (model list, VRAM, no tok/s)
-- **Single binary** — `go install` or download from GitHub releases
-- **Cross-platform** — Linux (eBPF, primary) and macOS (pcap)
+Requires Go 1.21+ and macOS (Apple Silicon).
 
-## Tech stack
+```bash
+git clone https://github.com/evandhoffman/olltop.git
+cd olltop
+make build
+sudo ./olltop
+```
 
-- [Go](https://go.dev/)
-- [cilium/ebpf](https://github.com/cilium/ebpf) — eBPF loader and CO-RE support
-- [google/gopacket](https://github.com/google/gopacket) — packet capture for macOS
-- [bubbletea](https://github.com/charmbracelet/bubbletea) — terminal UI
-- [lipgloss](https://github.com/charmbracelet/lipgloss) — TUI styling
+## Usage
 
-## Status
+```
+Usage: olltop [flags]
 
-Not yet implemented. This repo was created based on the design exploration in [ollama-top](https://github.com/evandhoffman/ollama-top).
+Flags:
+  --host string    Ollama host URL (default: $OLLAMA_HOST or http://localhost:11434)
+  --debug          Enable debug logging (writes to olltop.log)
+  --version        Print version and exit
+```
+
+**Full mode** (with root): `sudo olltop` — shows tok/s, models, system metrics
+
+**Degraded mode** (without root): `olltop` — shows models and system metrics, tok/s unavailable
+
+### Configuration priority
+
+| Priority | Source |
+|---|---|
+| 1 (highest) | `--host` flag |
+| 2 | `$OLLAMA_HOST` env var |
+| 3 (default) | `http://localhost:11434` |
+
+## Platform support
+
+- **macOS on Apple Silicon (arm64)** — fully supported
+- Linux — planned (eBPF), not yet implemented
+- Intel Mac / Windows — not supported
+
+## Architecture
+
+```
+cmd/olltop/main.go              # entry point, CLI flags, privilege detection, wiring
+internal/
+├── capture/
+│   ├── capture.go               # Backend interface + EvalMetrics type
+│   └── pcap_darwin.go           # macOS: libpcap on lo0, TCP reassembly, JSON extraction
+├── ollama/
+│   ├── client.go                # HTTP client for /api/ps, /api/version with polling
+│   ├── client_test.go           # Tests
+│   └── types.go                 # ModelInfo, Snapshot types
+├── metrics/
+│   ├── aggregator.go            # Merge polling + capture data, rolling history, system metrics
+│   └── types.go                 # DisplaySnapshot, ModelDisplay, ThroughputInfo
+└── tui/
+    └── app.go                   # bubbletea TUI with sparklines, model table, system bars
+```
+
+## Known limitations
+
+- **tok/s only appears after a response completes** — the `eval_count`/`eval_duration` fields are only in the final `"done":true` chunk, not during streaming. Real-time during-generation tracking is a planned enhancement.
+- **No GPU metrics** — requires additional macOS APIs not yet implemented.
+- **Requires root** for tok/s — this is inherent to pcap on loopback.
 
 ## License
 
