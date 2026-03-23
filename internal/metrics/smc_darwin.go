@@ -198,7 +198,7 @@ static sensor_data_t read_sensors() {
     if (smc_open() != 0) return data;
 
     // CPU temperature — try common Apple Silicon keys
-    const char *cpu_keys[] = {"Tp09", "Tp01", "TC0P", "Tc0a", NULL};
+    const char *cpu_keys[] = {"Tp0C", "Tp09", "Tp01", "TC0P", "Tc0a", NULL};
     for (int i = 0; cpu_keys[i] != NULL; i++) {
         float t = smc_read_temp(cpu_keys[i]);
         if (t > 0 && t < 150) {
