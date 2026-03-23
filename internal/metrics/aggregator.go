@@ -43,6 +43,7 @@ type modelMetrics struct {
 // (capture.EvalMetrics) into unified DisplaySnapshot values for the TUI.
 type Aggregator struct {
 	hasCapture bool
+	startedAt  time.Time
 
 	mu             sync.Mutex
 	latestSnapshot ollama.Snapshot
@@ -55,6 +56,7 @@ type Aggregator struct {
 func NewAggregator(hasCapture bool) *Aggregator {
 	return &Aggregator{
 		hasCapture:  hasCapture,
+		startedAt:   time.Now(),
 		modelTokSec: make(map[string]*modelMetrics),
 		samples:     make([]sample, 0, sparkBuckets),
 	}
@@ -235,6 +237,13 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 		windowStart = a.samples[0].ts
 	}
 
+	// How many buckets has the app been alive for?
+	appRunning := now.Sub(a.startedAt)
+	activeBuckets := int(appRunning / bucketWidth)
+	if activeBuckets > sparkBuckets {
+		activeBuckets = sparkBuckets
+	}
+
 	sysInfo := collectSystemInfo()
 
 	return DisplaySnapshot{
@@ -245,6 +254,7 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 			CurrentPromptTPS: currentPTPS,
 			TokPerSecHistory: tokHist,
 			PromptTPSHistory: promptHist,
+			ActiveBuckets:    activeBuckets,
 			MaxTokPerSec:     maxTPS,
 			MaxPromptTPS:     maxPTPS,
 			WindowStart:      windowStart,

@@ -34,6 +34,7 @@ type ThroughputInfo struct {
 	MaxTokPerSec     float64   // peak tok/s in current window
 	MaxPromptTPS     float64   // peak prompt tok/s in current window
 	WindowStart      time.Time // oldest data point in the window
+	ActiveBuckets    int       // how many trailing buckets the app has been running for
 }
 
 // SystemInfo contains CPU and memory metrics.

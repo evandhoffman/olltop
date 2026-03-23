@@ -305,11 +305,12 @@ func (m Model) renderThroughput(inner int) string {
 		sinceStr = tp.WindowStart.Local().Format("3:04 PM")
 	}
 
-	tokLine := renderSparkRow("tok/s  ", tp.TokPerSecHistory, tp.CurrentTokPerSec, tp.MaxTokPerSec, sinceStr)
+	sparkWidth := 20
+	tokLine := renderSparkRow("tok/s  ", tp.TokPerSecHistory, tp.CurrentTokPerSec, tp.MaxTokPerSec, sinceStr, tp.ActiveBuckets, sparkWidth)
 	b.WriteString(m.renderBorderedLine(inner, tokLine))
 	b.WriteByte('\n')
 
-	promptLine := renderSparkRow("prompt ", tp.PromptTPSHistory, tp.CurrentPromptTPS, tp.MaxPromptTPS, sinceStr)
+	promptLine := renderSparkRow("prompt ", tp.PromptTPSHistory, tp.CurrentPromptTPS, tp.MaxPromptTPS, sinceStr, tp.ActiveBuckets, sparkWidth)
 	b.WriteString(m.renderBorderedLine(inner, promptLine))
 	b.WriteByte('\n')
 
@@ -318,8 +319,8 @@ func (m Model) renderThroughput(inner int) string {
 	return b.String()
 }
 
-func renderSparkRow(label string, history []float64, current, maxVal float64, since string) string {
-	spark := buildSparkline(history, 20)
+func renderSparkRow(label string, history []float64, current, maxVal float64, since string, activeBuckets, sparkWidth int) string {
+	spark := buildSparkline(history, sparkWidth, activeBuckets)
 	var val string
 	if current > 0 {
 		val = tokSecStyle.Render(fmt.Sprintf("%.1f tok/s", current))
@@ -335,20 +336,24 @@ func renderSparkRow(label string, history []float64, current, maxVal float64, si
 		}
 	}
 
-	return " " + dimStyle.Render(label) + " " + sparkStyle.Render(spark) + "   " + val + suffix
+	return " " + dimStyle.Render(label) + " " + spark + "   " + val + suffix
 }
 
-func buildSparkline(data []float64, width int) string {
-	if len(data) == 0 {
-		return strings.Repeat(string(sparkBlocks[0]), width)
+// buildSparkline renders a sparkline with activeBuckets of real data (green)
+// on the right, and dim placeholder dots on the left for pre-startup time.
+func buildSparkline(data []float64, width, activeBuckets int) string {
+	if activeBuckets > width {
+		activeBuckets = width
 	}
 
+	// Use the last `width` entries of data (or fewer if data is shorter)
 	start := 0
 	if len(data) > width {
 		start = len(data) - width
 	}
 	visible := data[start:]
 
+	// Find max for scaling
 	maxVal := 0.0
 	for _, v := range visible {
 		if v > maxVal {
@@ -356,11 +361,32 @@ func buildSparkline(data []float64, width int) string {
 		}
 	}
 
+	// How many leading slots are pre-startup?
+	inactiveCols := width - activeBuckets
+
 	var sb strings.Builder
-	for i := 0; i < width-len(visible); i++ {
-		sb.WriteRune(sparkBlocks[0])
+
+	// Pre-startup placeholder (dim dots)
+	if inactiveCols > 0 {
+		sb.WriteString(dimStyle.Render(strings.Repeat("·", inactiveCols)))
 	}
-	for _, v := range visible {
+
+	// Active portion (green sparkline)
+	activeStart := 0
+	if len(visible) > activeBuckets {
+		activeStart = len(visible) - activeBuckets
+	}
+	activeData := visible[activeStart:]
+
+	// Pad if we have fewer data points than active columns
+	padCount := activeBuckets - len(activeData)
+	if padCount > 0 {
+		sb.WriteString(sparkStyle.Render(strings.Repeat(string(sparkBlocks[0]), padCount)))
+	}
+
+	// Render active data
+	var activePart strings.Builder
+	for _, v := range activeData {
 		idx := 0
 		if maxVal > 0 {
 			idx = int(math.Round(v / maxVal * float64(len(sparkBlocks)-1)))
@@ -368,8 +394,9 @@ func buildSparkline(data []float64, width int) string {
 				idx = len(sparkBlocks) - 1
 			}
 		}
-		sb.WriteRune(sparkBlocks[idx])
+		activePart.WriteRune(sparkBlocks[idx])
 	}
+	sb.WriteString(sparkStyle.Render(activePart.String()))
 	return sb.String()
 }
 
