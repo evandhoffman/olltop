@@ -23,15 +23,15 @@ import (
 
 // ollamaResponse represents the JSON structure of an Ollama streaming response chunk.
 type ollamaResponse struct {
-	Model              string `json:"model"`
-	Done               bool   `json:"done"`
-	Response           string `json:"response"`            // /api/generate streaming field
-	Message            *struct{ Content string } `json:"message"` // /api/chat streaming field
-	EvalCount          int64  `json:"eval_count"`
-	EvalDuration       int64  `json:"eval_duration"`
-	PromptEvalCount    int64  `json:"prompt_eval_count"`
-	PromptEvalDuration int64  `json:"prompt_eval_duration"`
-	TotalDuration      int64  `json:"total_duration"`
+	Model              string                    `json:"model"`
+	Done               bool                      `json:"done"`
+	Response           string                    `json:"response"` // /api/generate streaming field
+	Message            *struct{ Content string } `json:"message"`  // /api/chat streaming field
+	EvalCount          int64                     `json:"eval_count"`
+	EvalDuration       int64                     `json:"eval_duration"`
+	PromptEvalCount    int64                     `json:"prompt_eval_count"`
+	PromptEvalDuration int64                     `json:"prompt_eval_duration"`
+	TotalDuration      int64                     `json:"total_duration"`
 }
 
 // hasContent returns true if this chunk contains a generated token.
@@ -95,6 +95,8 @@ type ollamaStream struct {
 
 	// Per-stream state for live metrics
 	model      string
+	requestSeq int64
+	requestID  string
 	firstChunk time.Time   // when we saw the first chunk (any)
 	firstToken time.Time   // when we saw the first content token
 	tokenCount int64       // tokens received so far
@@ -102,13 +104,13 @@ type ollamaStream struct {
 	lastEmit   time.Time   // last time we emitted streaming metrics
 
 	// Thinking phase tracking
-	phase             Phase
-	thinkStart        time.Time // when <think> was detected
-	thinkEnd          time.Time // when </think> was detected
-	thinkTokenCount   int64
+	phase              Phase
+	thinkStart         time.Time // when <think> was detected
+	thinkEnd           time.Time // when </think> was detected
+	thinkTokenCount    int64
 	responseTokenCount int64
 	firstResponseToken time.Time // first token after </think>
-	contentBuf        string    // buffer for detecting tags split across chunks
+	contentBuf         string    // buffer for detecting tags split across chunks
 }
 
 func (f *ollamaStreamFactory) New(net, transport gopacket.Flow) tcpassembly.Stream {
@@ -156,6 +158,8 @@ func (s *ollamaStream) run() {
 		// Track model name from first chunk
 		if s.model == "" {
 			s.model = resp.Model
+			s.requestSeq++
+			s.requestID = fmt.Sprintf("%s|%s|%d", s.net, s.transport, s.requestSeq)
 			s.firstChunk = now
 			slog.Debug("stream started", "model", s.model)
 		}
@@ -334,6 +338,7 @@ func (s *ollamaStream) emitStreamingUpdate(now time.Time, active bool) {
 
 	sm := StreamingMetrics{
 		Model:              s.model,
+		RequestID:          s.requestID,
 		TokenCount:         s.tokenCount,
 		LiveTokPerSec:      liveTPS,
 		TTFT:               ttft,
@@ -368,6 +373,7 @@ func (s *ollamaStream) emitStreamingUpdate(now time.Time, active bool) {
 
 func (s *ollamaStream) resetStreamState() {
 	s.model = ""
+	s.requestID = ""
 	s.firstChunk = time.Time{}
 	s.firstToken = time.Time{}
 	s.tokenCount = 0

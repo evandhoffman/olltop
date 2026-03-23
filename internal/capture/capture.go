@@ -25,14 +25,15 @@ type EvalMetrics struct {
 type Phase string
 
 const (
-	PhaseNone      Phase = ""
-	PhaseThinking  Phase = "thinking"
+	PhaseNone       Phase = ""
+	PhaseThinking   Phase = "thinking"
 	PhaseResponding Phase = "responding"
 )
 
 // StreamingMetrics contains live token generation metrics from an active stream.
 type StreamingMetrics struct {
 	Model         string
+	RequestID     string        // unique request/stream identifier
 	TokenCount    int64         // total tokens received so far in this stream
 	LiveTokPerSec float64       // rolling tok/s computed from recent tokens
 	TTFT          time.Duration // time to first token (0 if unknown)
@@ -40,13 +41,13 @@ type StreamingMetrics struct {
 	Timestamp     time.Time
 
 	// Thinking/reasoning model support
-	Phase             Phase         // current phase: thinking or responding
-	ThinkTokenCount   int64         // tokens generated during thinking phase
-	ThinkDuration     time.Duration // duration of thinking phase
-	ThinkTokPerSec    float64       // tok/s during thinking
-	ResponseTokenCount int64        // tokens generated during response phase
-	ResponseTokPerSec  float64      // tok/s during response phase
-	TTFR              time.Duration // time to first response token (after thinking)
+	Phase              Phase         // current phase: thinking or responding
+	ThinkTokenCount    int64         // tokens generated during thinking phase
+	ThinkDuration      time.Duration // duration of thinking phase
+	ThinkTokPerSec     float64       // tok/s during thinking
+	ResponseTokenCount int64         // tokens generated during response phase
+	ResponseTokPerSec  float64       // tok/s during response phase
+	TTFR               time.Duration // time to first response token (after thinking)
 }
 
 // TokPerSec computes generation tokens per second.

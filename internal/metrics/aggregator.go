@@ -30,9 +30,10 @@ const (
 
 // sample is a timestamped tok/s measurement.
 type sample struct {
-	tokPS    float64
-	promptPS float64
-	ts       time.Time
+	tokPS         float64
+	promptPS      float64
+	includePrompt bool
+	ts            time.Time
 }
 
 // modelMetrics tracks the latest capture data for a model.
@@ -46,7 +47,8 @@ type streamingState struct {
 	liveTokPerSec      float64
 	ttft               time.Duration
 	ttfr               time.Duration
-	activeStreams       int // number of in-flight requests
+	activeRequests     int // number of in-flight requests
+	activeRequestIDs   map[string]struct{}
 	lastUpdate         time.Time
 	phase              capture.Phase
 	thinkTokenCount    int64
@@ -65,7 +67,7 @@ type Aggregator struct {
 	mu             sync.Mutex
 	latestSnapshot ollama.Snapshot
 	modelTokSec    map[string]*modelMetrics
-	modelStreaming  map[string]*streamingState
+	modelStreaming map[string]*streamingState
 	samples        []sample // time-windowed samples for sparkline
 }
 
@@ -73,11 +75,11 @@ type Aggregator struct {
 // capture is active (i.e., running as root).
 func NewAggregator(hasCapture bool) *Aggregator {
 	return &Aggregator{
-		hasCapture:    hasCapture,
-		startedAt:     time.Now(),
-		modelTokSec:   make(map[string]*modelMetrics),
+		hasCapture:     hasCapture,
+		startedAt:      time.Now(),
+		modelTokSec:    make(map[string]*modelMetrics),
 		modelStreaming: make(map[string]*streamingState),
-		samples:       make([]sample, 0, sparkBuckets),
+		samples:        make([]sample, 0, sparkBuckets),
 	}
 }
 
@@ -156,9 +158,10 @@ func (a *Aggregator) handleCaptureMetrics(m capture.EvalMetrics) {
 
 	// Record timestamped sample
 	a.samples = append(a.samples, sample{
-		tokPS:    m.TokPerSec(),
-		promptPS: m.PromptTokPerSec(),
-		ts:       now,
+		tokPS:         m.TokPerSec(),
+		promptPS:      m.PromptTokPerSec(),
+		includePrompt: true,
+		ts:            now,
 	})
 
 	slog.Debug("received capture metrics",
@@ -195,11 +198,27 @@ func (a *Aggregator) handleStreamingMetrics(sm capture.StreamingMetrics) {
 	state.responseTokenCount = sm.ResponseTokenCount
 	state.responseTokPerSec = sm.ResponseTokPerSec
 
-	if sm.Active {
-		state.activeStreams = max(1, state.activeStreams)
+	if sm.RequestID != "" {
+		if state.activeRequestIDs == nil {
+			state.activeRequestIDs = make(map[string]struct{})
+		}
+		if sm.Active {
+			if _, ok := state.activeRequestIDs[sm.RequestID]; !ok {
+				state.activeRequestIDs[sm.RequestID] = struct{}{}
+				state.activeRequests++
+			}
+		} else if _, ok := state.activeRequestIDs[sm.RequestID]; ok {
+			delete(state.activeRequestIDs, sm.RequestID)
+			state.activeRequests = max(0, state.activeRequests-1)
+			if state.activeRequests == 0 {
+				state.liveTokPerSec = 0
+			}
+		}
+	} else if sm.Active {
+		state.activeRequests = max(1, state.activeRequests)
 	} else {
-		state.activeStreams = max(0, state.activeStreams-1)
-		if state.activeStreams == 0 {
+		state.activeRequests = max(0, state.activeRequests-1)
+		if state.activeRequests == 0 {
 			state.liveTokPerSec = 0
 		}
 	}
@@ -207,8 +226,9 @@ func (a *Aggregator) handleStreamingMetrics(sm capture.StreamingMetrics) {
 	// Also record as a sparkline sample when actively streaming
 	if sm.Active && sm.LiveTokPerSec > 0 {
 		a.samples = append(a.samples, sample{
-			tokPS: sm.LiveTokPerSec,
-			ts:    sm.Timestamp,
+			tokPS:         sm.LiveTokPerSec,
+			includePrompt: false,
+			ts:            sm.Timestamp,
 		})
 	}
 
@@ -220,7 +240,7 @@ func (a *Aggregator) handleStreamingMetrics(sm capture.StreamingMetrics) {
 		"ttft", sm.TTFT,
 		"ttfr", sm.TTFR,
 		"active", sm.Active,
-		"active_streams", state.activeStreams,
+		"active_requests", state.activeRequests,
 	)
 }
 
@@ -275,7 +295,7 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 		if ss, ok := a.modelStreaming[m.Name]; ok {
 			if now.Sub(ss.lastUpdate) < streamActiveThreshold {
 				md.LiveTokPerSec = ss.liveTokPerSec
-				md.ActiveRequests = ss.activeStreams
+				md.ActiveRequests = ss.activeRequests
 				md.TTFT = ss.ttft
 				md.TTFR = ss.ttfr
 				md.Phase = string(ss.phase)
@@ -284,7 +304,7 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 				md.ThinkTokPerSec = ss.thinkTokPerSec
 				md.ResponseTokenCount = ss.responseTokenCount
 				md.ResponseTokPerSec = ss.responseTokPerSec
-				if ss.activeStreams > 0 {
+				if ss.activeRequests > 0 {
 					if ss.phase == capture.PhaseThinking {
 						md.Status = "thinking"
 					} else {
@@ -296,6 +316,9 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 
 		// Merge capture data (final tok/s) if available — but zero it out if stale
 		if mm, ok := a.modelTokSec[m.Name]; ok {
+			if md.TTFT == 0 && md.ActiveRequests == 0 {
+				md.TTFT = mm.lastMetrics.PromptEvalDuration
+			}
 			if now.Sub(mm.lastSeen) < activeThreshold {
 				md.CurrentTokPerSec = mm.lastMetrics.TokPerSec()
 				md.PromptTokPerSec = mm.lastMetrics.PromptTokPerSec()
@@ -389,7 +412,8 @@ func (a *Aggregator) buildSparklineHistory(now time.Time) (tokHist, promptHist [
 	windowStart := now.Add(-historyWindow)
 
 	// Count samples per bucket for averaging
-	counts := make([]int, sparkBuckets)
+	tokCounts := make([]int, sparkBuckets)
+	promptCounts := make([]int, sparkBuckets)
 
 	for _, s := range a.samples {
 		elapsed := s.ts.Sub(windowStart)
@@ -401,15 +425,20 @@ func (a *Aggregator) buildSparklineHistory(now time.Time) (tokHist, promptHist [
 			bucket = sparkBuckets - 1
 		}
 		tokHist[bucket] += s.tokPS
-		promptHist[bucket] += s.promptPS
-		counts[bucket]++
+		tokCounts[bucket]++
+		if s.includePrompt {
+			promptHist[bucket] += s.promptPS
+			promptCounts[bucket]++
+		}
 	}
 
 	// Average the buckets that have multiple samples
 	for i := range tokHist {
-		if counts[i] > 1 {
-			tokHist[i] /= float64(counts[i])
-			promptHist[i] /= float64(counts[i])
+		if tokCounts[i] > 1 {
+			tokHist[i] /= float64(tokCounts[i])
+		}
+		if promptCounts[i] > 1 {
+			promptHist[i] /= float64(promptCounts[i])
 		}
 	}
 

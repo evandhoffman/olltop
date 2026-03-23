@@ -16,12 +16,12 @@ import (
 type SortMode int
 
 const (
-	SortDefault SortMode = iota // API order
-	SortName                    // alphabetical
-	SortTokSec                  // highest tok/s first
-	SortVRAM                    // largest VRAM first
-	SortStatus                  // running first, then idle
-	sortModeCount               // sentinel for cycling
+	SortDefault   SortMode = iota // API order
+	SortName                      // alphabetical
+	SortTokSec                    // highest tok/s first
+	SortVRAM                      // largest VRAM first
+	SortStatus                    // running first, then idle
+	sortModeCount                 // sentinel for cycling
 )
 
 func (s SortMode) String() string {
@@ -103,15 +103,15 @@ type tickMsg struct{}
 
 // Model is the bubbletea model for olltop's TUI.
 type Model struct {
-	snapshot      metrics.DisplaySnapshot
-	lastConnected metrics.DisplaySnapshot // last snapshot where Connected=true
-	host          string
-	width         int
-	height        int
-	quitting      bool
-	tick          int // animation frame counter
-	showHelp      bool
-	sortMode      SortMode
+	snapshot       metrics.DisplaySnapshot
+	lastConnected  metrics.DisplaySnapshot // last snapshot where Connected=true
+	host           string
+	width          int
+	height         int
+	quitting       bool
+	tick           int // animation frame counter
+	showHelp       bool
+	sortMode       SortMode
 	disconnectedAt time.Time // when we first noticed disconnection
 }
 
@@ -316,12 +316,13 @@ func (m Model) renderModelsTable(inner int) string {
 		colSize    = 12
 		colVRAM    = 12
 		colTokSec  = 10
+		colTTFT    = 10
 		colStatus  = 10
 		colExpires = 10
 	)
 
 	// Column headers — highlight the active sort column
-	modelHdr, sizeHdr, vramHdr, tokHdr, statusHdr, expiresHdr := "MODEL", "SIZE", "VRAM", "tok/s", "STATUS", "EXPIRES"
+	modelHdr, sizeHdr, vramHdr, tokHdr, ttftHdr, statusHdr, expiresHdr := "MODEL", "SIZE", "VRAM", "tok/s", "TTFT", "STATUS", "EXPIRES"
 	switch m.sortMode {
 	case SortName:
 		modelHdr = "MODEL ▼"
@@ -333,11 +334,12 @@ func (m Model) renderModelsTable(inner int) string {
 		statusHdr = "STATUS ▼"
 	}
 
-	hdr := fmt.Sprintf(" %-*s %-*s %-*s %-*s %-*s %-*s",
+	hdr := fmt.Sprintf(" %-*s %-*s %-*s %-*s %-*s %-*s %-*s",
 		colModel, modelHdr,
 		colSize, sizeHdr,
 		colVRAM, vramHdr,
 		colTokSec, tokHdr,
+		colTTFT, ttftHdr,
 		colStatus, statusHdr,
 		colExpires, expiresHdr)
 	b.WriteString(m.renderBorderedLine(inner, dimStyle.Render(hdr)))
@@ -396,6 +398,11 @@ func (m Model) renderModelsTable(inner int) string {
 			tps = dimStyle.Render("\u2014")
 		}
 
+		ttft := dimStyle.Render("\u2014")
+		if mdl.TTFT > 0 {
+			ttft = tokSecStyle.Render(formatTTFT(mdl.TTFT))
+		}
+
 		// Status with active request count and phase
 		var status string
 		thinkingColor := lipgloss.Color("213") // pink/magenta for thinking
@@ -424,6 +431,7 @@ func (m Model) renderModelsTable(inner int) string {
 			" " + padRight(size, colSize) +
 			" " + padRight(vram, colVRAM) +
 			" " + padRight(tps, colTokSec) +
+			" " + padRight(ttft, colTTFT) +
 			" " + padRight(status, colStatus) +
 			" " + expires
 
@@ -858,11 +866,22 @@ func padRight(s string, width int) string {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if lipgloss.Width(s) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return strings.Repeat(".", maxLen)
 	}
-	return s[:maxLen-3] + "..."
+	target := maxLen - 3
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if used+rw > target {
+			break
+		}
+		b.WriteRune(r)
+		used += rw
+	}
+	return b.String() + "..."
 }
