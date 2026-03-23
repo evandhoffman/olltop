@@ -1,5 +1,5 @@
 # Binaries
-olltop
+/olltop
 *.o
 *.test
 
