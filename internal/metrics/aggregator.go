@@ -58,6 +58,17 @@ type streamingState struct {
 	responseTokPerSec  float64
 }
 
+// systemSample is a timestamped system metrics measurement.
+type systemSample struct {
+	cpuTemp    float64
+	gpuTemp    float64
+	fanRPM     float64
+	includeCPU bool
+	includeGPU bool
+	includeFan bool
+	ts         time.Time
+}
+
 // Aggregator merges polling data (ollama.Snapshot) and capture data
 // (capture.EvalMetrics) into unified DisplaySnapshot values for the TUI.
 type Aggregator struct {
@@ -69,6 +80,7 @@ type Aggregator struct {
 	modelTokSec    map[string]*modelMetrics
 	modelStreaming map[string]*streamingState
 	samples        []sample // time-windowed samples for sparkline
+	systemSamples  []systemSample
 }
 
 // NewAggregator creates a new Aggregator. Set hasCapture to true if pcap
@@ -80,6 +92,7 @@ func NewAggregator(hasCapture bool) *Aggregator {
 		modelTokSec:    make(map[string]*modelMetrics),
 		modelStreaming: make(map[string]*streamingState),
 		samples:        make([]sample, 0, sparkBuckets),
+		systemSamples:  make([]systemSample, 0, sparkBuckets),
 	}
 }
 
@@ -271,6 +284,7 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 
 	now := time.Now()
 	a.pruneSamples(now)
+	a.pruneSystemSamples(now)
 
 	snap := a.latestSnapshot
 
@@ -382,6 +396,12 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 	}
 
 	sysInfo := collectSystemInfo()
+	a.recordSystemSample(now, sysInfo)
+	cpuHist, gpuHist, fanHist := a.buildSystemHistory(now)
+	sysInfo.CPUHistory = cpuHist
+	sysInfo.GPUHistory = gpuHist
+	sysInfo.FanHistory = fanHist
+	sysInfo.ActiveBuckets = activeBuckets
 
 	return DisplaySnapshot{
 		Models:     models,
@@ -443,6 +463,91 @@ func (a *Aggregator) buildSparklineHistory(now time.Time) (tokHist, promptHist [
 	}
 
 	return tokHist, promptHist
+}
+
+func (a *Aggregator) recordSystemSample(now time.Time, sys SystemInfo) {
+	sample := systemSample{ts: now}
+	if sys.SensorsAvail && sys.CPUTemp > 0 {
+		sample.cpuTemp = sys.CPUTemp
+		sample.includeCPU = true
+	}
+	if sys.SensorsAvail && sys.GPUTemp > 0 {
+		sample.gpuTemp = sys.GPUTemp
+		sample.includeGPU = true
+	}
+	if sys.SensorsAvail && len(sys.FanSpeeds) > 0 {
+		maxRPM := 0.0
+		for _, rpm := range sys.FanSpeeds {
+			if rpm > maxRPM {
+				maxRPM = rpm
+			}
+		}
+		sample.fanRPM = maxRPM
+		sample.includeFan = true
+	}
+
+	if sample.includeCPU || sample.includeGPU || sample.includeFan {
+		a.systemSamples = append(a.systemSamples, sample)
+	}
+}
+
+func (a *Aggregator) pruneSystemSamples(now time.Time) {
+	cutoff := now.Add(-historyWindow)
+	i := 0
+	for i < len(a.systemSamples) && a.systemSamples[i].ts.Before(cutoff) {
+		i++
+	}
+	if i > 0 {
+		a.systemSamples = a.systemSamples[i:]
+	}
+}
+
+func (a *Aggregator) buildSystemHistory(now time.Time) (cpuHist, gpuHist, fanHist []float64) {
+	cpuHist = make([]float64, sparkBuckets)
+	gpuHist = make([]float64, sparkBuckets)
+	fanHist = make([]float64, sparkBuckets)
+
+	windowStart := now.Add(-historyWindow)
+	cpuCounts := make([]int, sparkBuckets)
+	gpuCounts := make([]int, sparkBuckets)
+	fanCounts := make([]int, sparkBuckets)
+
+	for _, s := range a.systemSamples {
+		elapsed := s.ts.Sub(windowStart)
+		if elapsed < 0 {
+			continue
+		}
+		bucket := int(elapsed / bucketWidth)
+		if bucket >= sparkBuckets {
+			bucket = sparkBuckets - 1
+		}
+		if s.includeCPU {
+			cpuHist[bucket] += s.cpuTemp
+			cpuCounts[bucket]++
+		}
+		if s.includeGPU {
+			gpuHist[bucket] += s.gpuTemp
+			gpuCounts[bucket]++
+		}
+		if s.includeFan {
+			fanHist[bucket] += s.fanRPM
+			fanCounts[bucket]++
+		}
+	}
+
+	for i := range cpuHist {
+		if cpuCounts[i] > 1 {
+			cpuHist[i] /= float64(cpuCounts[i])
+		}
+		if gpuCounts[i] > 1 {
+			gpuHist[i] /= float64(gpuCounts[i])
+		}
+		if fanCounts[i] > 1 {
+			fanHist[i] /= float64(fanCounts[i])
+		}
+	}
+
+	return cpuHist, gpuHist, fanHist
 }
 
 func collectSystemInfo() SystemInfo {

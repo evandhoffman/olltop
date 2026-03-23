@@ -84,16 +84,20 @@ func TestViewConnectedAndDisconnected(t *testing.T) {
 			ActiveBuckets:    2,
 		},
 		SystemInfo: metrics.SystemInfo{
-			CPUPercent:   42,
-			GPUAvail:     true,
-			GPUPercent:   67,
-			MemUsed:      64 * 1024 * 1024 * 1024,
-			MemTotal:     128 * 1024 * 1024 * 1024,
-			MemPercent:   50,
-			SensorsAvail: true,
-			CPUTemp:      73,
-			GPUTemp:      68,
-			FanSpeeds:    []float64{2100},
+			CPUPercent:    42,
+			GPUAvail:      true,
+			GPUPercent:    67,
+			MemUsed:       64 * 1024 * 1024 * 1024,
+			MemTotal:      128 * 1024 * 1024 * 1024,
+			MemPercent:    50,
+			SensorsAvail:  true,
+			CPUTemp:       73,
+			GPUTemp:       68,
+			FanSpeeds:     []float64{2100},
+			CPUHistory:    []float64{65, 68, 71, 73},
+			GPUHistory:    []float64{60, 62, 65, 68},
+			FanHistory:    []float64{1500, 1800, 2000, 2100},
+			ActiveBuckets: 4,
 		},
 	}
 
@@ -102,6 +106,9 @@ func TestViewConnectedAndDisconnected(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("connected view missing %q\n%s", want, out)
 		}
+	}
+	if !strings.ContainsAny(out, "▁▂▃▄▅▆▇█") {
+		t.Fatalf("connected view missing sparkline blocks\n%s", out)
 	}
 
 	disconnected := NewModel("http://localhost:11434")

@@ -534,6 +534,10 @@ func renderSparkRow(label string, history []float64, current, maxVal float64, si
 // buildSparkline renders a sparkline with activeBuckets of real data (green)
 // on the right, and dim placeholder dots on the left for pre-startup time.
 func buildSparkline(data []float64, width, activeBuckets int) string {
+	return buildSparklineStyled(data, width, activeBuckets, sparkStyle)
+}
+
+func buildSparklineStyled(data []float64, width, activeBuckets int, activeStyle lipgloss.Style) string {
 	if activeBuckets > width {
 		activeBuckets = width
 	}
@@ -573,7 +577,7 @@ func buildSparkline(data []float64, width, activeBuckets int) string {
 	// Pad if we have fewer data points than active columns
 	padCount := activeBuckets - len(activeData)
 	if padCount > 0 {
-		sb.WriteString(sparkStyle.Render(strings.Repeat(string(sparkBlocks[0]), padCount)))
+		sb.WriteString(activeStyle.Render(strings.Repeat(string(sparkBlocks[0]), padCount)))
 	}
 
 	// Render active data
@@ -588,7 +592,7 @@ func buildSparkline(data []float64, width, activeBuckets int) string {
 		}
 		activePart.WriteRune(sparkBlocks[idx])
 	}
-	sb.WriteString(sparkStyle.Render(activePart.String()))
+	sb.WriteString(activeStyle.Render(activePart.String()))
 	return sb.String()
 }
 
@@ -618,6 +622,7 @@ func fanStyle(rpm float64) lipgloss.Style {
 
 func (m Model) renderSystem(inner int) string {
 	sys := m.snapshot.SystemInfo
+	sparkWidth := 8
 
 	// Line 1: CPU and GPU utilization with temps
 	cpuBar := renderBar(sys.CPUPercent, 10)
@@ -625,6 +630,9 @@ func (m Model) renderSystem(inner int) string {
 	if sys.SensorsAvail && sys.CPUTemp > 0 {
 		style := tempStyle(sys.CPUTemp, 70, 90)
 		cpuPart += " " + style.Render(fmt.Sprintf("%.0f°C", sys.CPUTemp))
+		if len(sys.CPUHistory) > 0 {
+			cpuPart += " " + buildSparklineStyled(sys.CPUHistory, sparkWidth, sys.ActiveBuckets, style)
+		}
 	}
 
 	var gpuPart string
@@ -634,6 +642,9 @@ func (m Model) renderSystem(inner int) string {
 		if sys.SensorsAvail && sys.GPUTemp > 0 {
 			style := tempStyle(sys.GPUTemp, 75, 95)
 			gpuPart += " " + style.Render(fmt.Sprintf("%.0f°C", sys.GPUTemp))
+			if len(sys.GPUHistory) > 0 {
+				gpuPart += " " + buildSparklineStyled(sys.GPUHistory, sparkWidth, sys.ActiveBuckets, style)
+			}
 		}
 	}
 
@@ -666,6 +677,9 @@ func (m Model) renderSystem(inner int) string {
 				parts += fmt.Sprintf("%.0f", rpm)
 			}
 			fanPart = "   " + style.Render(spinner) + dimStyle.Render(" Fans ") + style.Render(fmt.Sprintf("%s RPM", parts))
+		}
+		if len(sys.FanHistory) > 0 {
+			fanPart += " " + buildSparklineStyled(sys.FanHistory, sparkWidth, sys.ActiveBuckets, style)
 		}
 	}
 

@@ -122,3 +122,51 @@ func TestBuildSnapshotUsesPromptEvalDurationForTTFT(t *testing.T) {
 		t.Fatalf("TTFT = %v, want 340ms", got)
 	}
 }
+
+func TestBuildSystemHistoryAndPrune(t *testing.T) {
+	a := NewAggregator(true)
+	now := time.Now()
+	inside := now.Add(-2 * time.Minute)
+	outside := now.Add(-6 * time.Minute)
+
+	a.systemSamples = []systemSample{
+		{
+			cpuTemp:    70,
+			gpuTemp:    65,
+			fanRPM:     2000,
+			includeCPU: true,
+			includeGPU: true,
+			includeFan: true,
+			ts:         outside,
+		},
+		{
+			cpuTemp:    75,
+			gpuTemp:    68,
+			fanRPM:     2500,
+			includeCPU: true,
+			includeGPU: true,
+			includeFan: true,
+			ts:         inside,
+		},
+	}
+
+	a.pruneSystemSamples(now)
+	if len(a.systemSamples) != 1 {
+		t.Fatalf("len(systemSamples) = %d, want 1", len(a.systemSamples))
+	}
+
+	cpuHist, gpuHist, fanHist := a.buildSystemHistory(now)
+	if len(cpuHist) != sparkBuckets || len(gpuHist) != sparkBuckets || len(fanHist) != sparkBuckets {
+		t.Fatalf("unexpected history lengths: %d %d %d", len(cpuHist), len(gpuHist), len(fanHist))
+	}
+	bucket := int(inside.Sub(now.Add(-historyWindow)) / bucketWidth)
+	if got := cpuHist[bucket]; got != 75 {
+		t.Fatalf("cpuHist[%d] = %v, want 75", bucket, got)
+	}
+	if got := gpuHist[bucket]; got != 68 {
+		t.Fatalf("gpuHist[%d] = %v, want 68", bucket, got)
+	}
+	if got := fanHist[bucket]; got != 2500 {
+		t.Fatalf("fanHist[%d] = %v, want 2500", bucket, got)
+	}
+}

@@ -20,8 +20,8 @@ type ModelDisplay struct {
 	SizeVRAM         int64
 	CurrentTokPerSec float64
 	PromptTokPerSec  float64
-	LiveTokPerSec    float64       // real-time tok/s from streaming chunks
-	Status           string        // "running", "thinking", or "idle"
+	LiveTokPerSec    float64 // real-time tok/s from streaming chunks
+	Status           string  // "running", "thinking", or "idle"
 	ExpiresIn        time.Duration
 	Digest           string
 	TTFT             time.Duration // time to first token (most recent request)
@@ -29,7 +29,7 @@ type ModelDisplay struct {
 	ActiveRequests   int           // number of in-flight requests
 
 	// Thinking phase metrics (reasoning models)
-	Phase              string        // "thinking", "responding", or ""
+	Phase              string // "thinking", "responding", or ""
 	ThinkTokenCount    int64
 	ThinkDuration      time.Duration
 	ThinkTokPerSec     float64
@@ -51,14 +51,18 @@ type ThroughputInfo struct {
 
 // SystemInfo contains CPU, GPU, memory, and sensor metrics.
 type SystemInfo struct {
-	CPUPercent  float64
-	GPUPercent  float64 // Apple Silicon device utilization %
-	GPUAvail    bool    // whether GPU metrics are available
-	MemUsed     uint64
-	MemTotal    uint64
-	MemPercent  float64
-	CPUTemp     float64   // °C
-	GPUTemp     float64   // °C
-	FanSpeeds   []float64 // RPM per fan
-	SensorsAvail bool
+	CPUPercent    float64
+	GPUPercent    float64 // Apple Silicon device utilization %
+	GPUAvail      bool    // whether GPU metrics are available
+	MemUsed       uint64
+	MemTotal      uint64
+	MemPercent    float64
+	CPUTemp       float64   // °C
+	GPUTemp       float64   // °C
+	FanSpeeds     []float64 // RPM per fan
+	CPUHistory    []float64 // last 5m of CPU temps
+	GPUHistory    []float64 // last 5m of GPU temps
+	FanHistory    []float64 // last 5m of max fan RPM
+	ActiveBuckets int       // how many trailing buckets the app has been running for
+	SensorsAvail  bool
 }
