@@ -642,8 +642,31 @@ func fanStyle(rpm float64) lipgloss.Style {
 
 func (m Model) renderSystem(inner int) string {
 	sys := m.snapshot.SystemInfo
-	sparkWidth := 8
-	barWidth := 10
+
+	// Dynamic sizing: bar and sparkline scale with terminal width.
+	// CPU/GPU row: " LBL  [bar]  pct%  temp spark"
+	// Fixed overhead: 6 (label) + 2 + 4 (pct) + 2 + 5 (temp) + 1 = 20
+	const sysFixedOverhead = 20
+	available := inner - sysFixedOverhead
+
+	barWidth := available / 3
+	if barWidth < 10 {
+		barWidth = 10
+	}
+	if barWidth > 20 {
+		barWidth = 20
+	}
+
+	sparkWidth := available - barWidth
+	if sparkWidth > 60 { // cap at sparkBuckets count
+		sparkWidth = 60
+	}
+	if sparkWidth < 8 {
+		sparkWidth = 8
+	}
+
+	// Column where sparklines start (for aligning Fan with CPU/GPU)
+	sparkCol := sysFixedOverhead + barWidth
 
 	var b strings.Builder
 
@@ -673,13 +696,13 @@ func (m Model) renderSystem(inner int) string {
 		b.WriteByte('\n')
 	}
 
-	// RAM row: bar + percentage + used/total
+	// RAM row: bar + percentage + used/total (same bar width, no sparkline)
 	ramLine := " RAM  " + renderBar(sys.MemPercent, barWidth) + fmt.Sprintf("  %3.0f%%", sys.MemPercent) +
 		"  " + formatBytesUint64(sys.MemUsed) + " / " + formatBytesUint64(sys.MemTotal)
 	b.WriteString(m.renderBorderedLine(inner, ramLine))
 	b.WriteByte('\n')
 
-	// Fan row: RPM + sparkline (only if sensors available)
+	// Fan row: RPM + sparkline (aligned with CPU/GPU sparklines)
 	if sys.SensorsAvail && len(sys.FanSpeeds) > 0 {
 		var fanLine string
 		maxRPM := 0.0
@@ -702,7 +725,12 @@ func (m Model) renderSystem(inner int) string {
 				fanLine = " Fan  " + fs.Render(strings.Join(parts, "/")+" RPM")
 			}
 			if len(sys.FanHistory) > 0 {
-				fanLine += "  " + buildSparklineStyled(sys.FanHistory, sparkWidth, sys.ActiveBuckets, fs)
+				// Pad to align sparkline with CPU/GPU rows
+				fanContentWidth := lipgloss.Width(fanLine)
+				if fanContentWidth < sparkCol {
+					fanLine += strings.Repeat(" ", sparkCol-fanContentWidth)
+				}
+				fanLine += buildSparklineStyled(sys.FanHistory, sparkWidth, sys.ActiveBuckets, fs)
 			}
 		}
 		b.WriteString(m.renderBorderedLine(inner, fanLine))
