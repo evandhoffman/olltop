@@ -39,6 +39,7 @@ type sample struct {
 // modelMetrics tracks the latest capture data for a model.
 type modelMetrics struct {
 	lastMetrics capture.EvalMetrics
+	lastTTFT    time.Duration
 	lastSeen    time.Time
 }
 
@@ -211,6 +212,15 @@ func (a *Aggregator) handleStreamingMetrics(sm capture.StreamingMetrics) {
 	state.responseTokenCount = sm.ResponseTokenCount
 	state.responseTokPerSec = sm.ResponseTokPerSec
 
+	if sm.TTFT > 0 {
+		metricsState, ok := a.modelTokSec[sm.Model]
+		if !ok {
+			metricsState = &modelMetrics{}
+			a.modelTokSec[sm.Model] = metricsState
+		}
+		metricsState.lastTTFT = sm.TTFT
+	}
+
 	if sm.RequestID != "" {
 		if state.activeRequestIDs == nil {
 			state.activeRequestIDs = make(map[string]struct{})
@@ -330,8 +340,8 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 
 		// Merge capture data (final tok/s) if available — but zero it out if stale
 		if mm, ok := a.modelTokSec[m.Name]; ok {
-			if md.TTFT == 0 && md.ActiveRequests == 0 {
-				md.TTFT = mm.lastMetrics.PromptEvalDuration
+			if md.TTFT == 0 && mm.lastTTFT > 0 {
+				md.TTFT = mm.lastTTFT
 			}
 			if now.Sub(mm.lastSeen) < activeThreshold {
 				md.CurrentTokPerSec = mm.lastMetrics.TokPerSec()

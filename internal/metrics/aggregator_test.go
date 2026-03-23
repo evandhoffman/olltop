@@ -96,7 +96,7 @@ func TestBuildSparklineHistoryIgnoresStreamingSamplesForPromptHistory(t *testing
 	}
 }
 
-func TestBuildSnapshotUsesPromptEvalDurationForTTFT(t *testing.T) {
+func TestBuildSnapshotUsesPersistedTTFT(t *testing.T) {
 	a := NewAggregator(true)
 	now := time.Now()
 
@@ -108,9 +108,9 @@ func TestBuildSnapshotUsesPromptEvalDurationForTTFT(t *testing.T) {
 	}
 	a.modelTokSec["deepseek-r1:8b"] = &modelMetrics{
 		lastMetrics: capture.EvalMetrics{
-			Model:              "deepseek-r1:8b",
-			PromptEvalDuration: 340 * time.Millisecond,
+			Model: "deepseek-r1:8b",
 		},
+		lastTTFT: 340 * time.Millisecond,
 		lastSeen: now,
 	}
 
