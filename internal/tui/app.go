@@ -398,19 +398,25 @@ func (m Model) renderModelsTable(inner int) string {
 
 		// Prefer live streaming tok/s over final eval tok/s
 		var tps string
-		effectiveTPS := mdl.LiveTokPerSec
-		if effectiveTPS == 0 {
-			effectiveTPS = mdl.CurrentTokPerSec
-		}
-		if effectiveTPS > 0 {
-			tps = tokSecStyle.Render(fmt.Sprintf("%.1f", effectiveTPS))
+		var ttft string
+		if !m.snapshot.HasCapture {
+			tps = dimStyle.Render("<root>")
+			ttft = dimStyle.Render("<root>")
 		} else {
-			tps = dimStyle.Render("\u2014")
-		}
+			effectiveTPS := mdl.LiveTokPerSec
+			if effectiveTPS == 0 {
+				effectiveTPS = mdl.CurrentTokPerSec
+			}
+			if effectiveTPS > 0 {
+				tps = tokSecStyle.Render(fmt.Sprintf("%.1f", effectiveTPS))
+			} else {
+				tps = dimStyle.Render("\u2014")
+			}
 
-		ttft := dimStyle.Render("\u2014")
-		if mdl.TTFT > 0 {
-			ttft = tokSecStyle.Render(formatTTFT(mdl.TTFT))
+			ttft = dimStyle.Render("\u2014")
+			if mdl.TTFT > 0 {
+				ttft = tokSecStyle.Render(formatTTFT(mdl.TTFT))
+			}
 		}
 
 		// Status with active request count and phase
@@ -494,13 +500,6 @@ func (m Model) renderModelsTable(inner int) string {
 func (m Model) renderThroughput(inner int) string {
 	var b strings.Builder
 
-	if !m.snapshot.HasCapture {
-		msg := warnStyle.Render(" \u26a0 tok/s monitoring requires root: sudo olltop")
-		b.WriteString(m.renderBorderedLine(inner, msg))
-		b.WriteByte('\n')
-		return b.String()
-	}
-
 	tp := m.snapshot.TokPerSec
 	sinceStr := ""
 	if !tp.WindowStart.IsZero() {
@@ -508,13 +507,24 @@ func (m Model) renderThroughput(inner int) string {
 	}
 
 	sparkWidth := 20
-	tokLine := renderSparkRow("tok/s  ", tp.TokPerSecHistory, tp.CurrentTokPerSec, tp.MaxTokPerSec, sinceStr, tp.ActiveBuckets, sparkWidth)
-	b.WriteString(m.renderBorderedLine(inner, tokLine))
-	b.WriteByte('\n')
 
-	promptLine := renderSparkRow("prompt ", tp.PromptTPSHistory, tp.CurrentPromptTPS, tp.MaxPromptTPS, sinceStr, tp.ActiveBuckets, sparkWidth)
-	b.WriteString(m.renderBorderedLine(inner, promptLine))
-	b.WriteByte('\n')
+	if !m.snapshot.HasCapture {
+		noCapture := dimStyle.Render("<requires root>")
+		tokLine := " " + dimStyle.Render("tok/s  ") + " " + dimStyle.Render(strings.Repeat("·", sparkWidth)) + "   " + noCapture
+		b.WriteString(m.renderBorderedLine(inner, tokLine))
+		b.WriteByte('\n')
+		promptLine := " " + dimStyle.Render("prompt ") + " " + dimStyle.Render(strings.Repeat("·", sparkWidth)) + "   " + noCapture
+		b.WriteString(m.renderBorderedLine(inner, promptLine))
+		b.WriteByte('\n')
+	} else {
+		tokLine := renderSparkRow("tok/s  ", tp.TokPerSecHistory, tp.CurrentTokPerSec, tp.MaxTokPerSec, sinceStr, tp.ActiveBuckets, sparkWidth)
+		b.WriteString(m.renderBorderedLine(inner, tokLine))
+		b.WriteByte('\n')
+
+		promptLine := renderSparkRow("prompt ", tp.PromptTPSHistory, tp.CurrentPromptTPS, tp.MaxPromptTPS, sinceStr, tp.ActiveBuckets, sparkWidth)
+		b.WriteString(m.renderBorderedLine(inner, promptLine))
+		b.WriteByte('\n')
+	}
 
 	b.WriteString(m.renderBorderedLine(inner, ""))
 	b.WriteByte('\n')
