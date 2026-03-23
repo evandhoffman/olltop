@@ -20,9 +20,12 @@ type ModelDisplay struct {
 	SizeVRAM         int64
 	CurrentTokPerSec float64
 	PromptTokPerSec  float64
-	Status           string // "running" or "idle"
+	LiveTokPerSec    float64       // real-time tok/s from streaming chunks
+	Status           string        // "running" or "idle"
 	ExpiresIn        time.Duration
 	Digest           string
+	TTFT             time.Duration // time to first token (most recent request)
+	ActiveRequests   int           // number of in-flight requests
 }
 
 // ThroughputInfo contains aggregate throughput data with history for sparklines.

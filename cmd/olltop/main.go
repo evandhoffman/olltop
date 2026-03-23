@@ -88,6 +88,7 @@ func main() {
 	// Channels
 	ollamaCh := make(chan ollama.Snapshot, 8)
 	captureCh := make(chan capture.EvalMetrics, 64)
+	streamingCh := make(chan capture.StreamingMetrics, 64)
 	displayCh := make(chan metrics.DisplaySnapshot, 4)
 
 	// Detect privileges
@@ -101,7 +102,7 @@ func main() {
 	if hasCapture {
 		backend := capture.NewPcapBackend(port)
 		go func() {
-			if err := backend.Start(ctx, captureCh); err != nil {
+			if err := backend.Start(ctx, captureCh, streamingCh); err != nil {
 				slog.Error("pcap capture failed", "error", err)
 			}
 		}()
@@ -112,11 +113,13 @@ func main() {
 	// Start metrics aggregator
 	agg := metrics.NewAggregator(hasCapture)
 	var aggCaptureCh <-chan capture.EvalMetrics
+	var aggStreamingCh <-chan capture.StreamingMetrics
 	if hasCapture {
 		aggCaptureCh = captureCh
+		aggStreamingCh = streamingCh
 	}
 	go func() {
-		if err := agg.Run(ctx, ollamaCh, aggCaptureCh, displayCh); err != nil {
+		if err := agg.Run(ctx, ollamaCh, aggCaptureCh, aggStreamingCh, displayCh); err != nil {
 			slog.Error("aggregator error", "error", err)
 		}
 	}()

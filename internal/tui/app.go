@@ -330,7 +330,17 @@ func (m Model) renderModelsTable(inner int) string {
 	case SortName:
 		sort.Slice(models, func(i, j int) bool { return models[i].Name < models[j].Name })
 	case SortTokSec:
-		sort.Slice(models, func(i, j int) bool { return models[i].CurrentTokPerSec > models[j].CurrentTokPerSec })
+		sort.Slice(models, func(i, j int) bool {
+			tpsI := models[i].LiveTokPerSec
+			if tpsI == 0 {
+				tpsI = models[i].CurrentTokPerSec
+			}
+			tpsJ := models[j].LiveTokPerSec
+			if tpsJ == 0 {
+				tpsJ = models[j].CurrentTokPerSec
+			}
+			return tpsI > tpsJ
+		})
 	case SortVRAM:
 		sort.Slice(models, func(i, j int) bool { return models[i].SizeVRAM > models[j].SizeVRAM })
 	case SortStatus:
@@ -347,16 +357,27 @@ func (m Model) renderModelsTable(inner int) string {
 		size := formatBytes(mdl.Size)
 		vram := formatBytes(mdl.SizeVRAM)
 
+		// Prefer live streaming tok/s over final eval tok/s
 		var tps string
-		if mdl.CurrentTokPerSec > 0 {
-			tps = tokSecStyle.Render(fmt.Sprintf("%.1f", mdl.CurrentTokPerSec))
+		effectiveTPS := mdl.LiveTokPerSec
+		if effectiveTPS == 0 {
+			effectiveTPS = mdl.CurrentTokPerSec
+		}
+		if effectiveTPS > 0 {
+			tps = tokSecStyle.Render(fmt.Sprintf("%.1f", effectiveTPS))
 		} else {
 			tps = dimStyle.Render("\u2014")
 		}
 
+		// Status with active request count
 		var status string
 		if mdl.Status == "running" {
-			status = lipgloss.NewStyle().Foreground(runningColor).Render("running")
+			runStyle := lipgloss.NewStyle().Foreground(runningColor)
+			if mdl.ActiveRequests > 1 {
+				status = runStyle.Render(fmt.Sprintf("run(%d)", mdl.ActiveRequests))
+			} else {
+				status = runStyle.Render("running")
+			}
 		} else {
 			status = lipgloss.NewStyle().Foreground(idleColor).Render("idle")
 		}
@@ -370,8 +391,16 @@ func (m Model) renderModelsTable(inner int) string {
 			" " + padRight(status, colStatus) +
 			" " + expires
 
+		// TTFT on a second line if available and model is active
 		b.WriteString(m.renderBorderedLine(inner, row))
 		b.WriteByte('\n')
+		if mdl.TTFT > 0 && mdl.Status == "running" {
+			ttftStr := formatTTFT(mdl.TTFT)
+			detail := " " + strings.Repeat(" ", colModel+1) +
+				dimStyle.Render("TTFT ") + tokSecStyle.Render(ttftStr)
+			b.WriteString(m.renderBorderedLine(inner, detail))
+			b.WriteByte('\n')
+		}
 	}
 
 	b.WriteString(m.renderBorderedLine(inner, ""))
@@ -600,6 +629,16 @@ func formatBytesUint64(b uint64) string {
 		return fmt.Sprintf("%.1f GB", float64(b)/float64(gb))
 	}
 	return fmt.Sprintf("%.1f MB", float64(b)/float64(mb))
+}
+
+func formatTTFT(d time.Duration) string {
+	if d < time.Millisecond {
+		return fmt.Sprintf("%dµs", d.Microseconds())
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
 func formatDuration(d time.Duration) string {

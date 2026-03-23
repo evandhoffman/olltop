@@ -24,6 +24,8 @@ const (
 	activeThreshold = 10 * time.Second
 	// tickInterval is how often the aggregator emits a fresh snapshot.
 	tickInterval = 1 * time.Second
+	// streamActiveThreshold: streaming data is considered fresh within this window.
+	streamActiveThreshold = 2 * time.Second
 )
 
 // sample is a timestamped tok/s measurement.
@@ -39,6 +41,14 @@ type modelMetrics struct {
 	lastSeen    time.Time
 }
 
+// streamingState tracks live streaming data for a model.
+type streamingState struct {
+	liveTokPerSec float64
+	ttft          time.Duration
+	activeStreams  int // number of in-flight requests
+	lastUpdate    time.Time
+}
+
 // Aggregator merges polling data (ollama.Snapshot) and capture data
 // (capture.EvalMetrics) into unified DisplaySnapshot values for the TUI.
 type Aggregator struct {
@@ -48,6 +58,7 @@ type Aggregator struct {
 	mu             sync.Mutex
 	latestSnapshot ollama.Snapshot
 	modelTokSec    map[string]*modelMetrics
+	modelStreaming  map[string]*streamingState
 	samples        []sample // time-windowed samples for sparkline
 }
 
@@ -55,62 +66,68 @@ type Aggregator struct {
 // capture is active (i.e., running as root).
 func NewAggregator(hasCapture bool) *Aggregator {
 	return &Aggregator{
-		hasCapture:  hasCapture,
-		startedAt:   time.Now(),
-		modelTokSec: make(map[string]*modelMetrics),
-		samples:     make([]sample, 0, sparkBuckets),
+		hasCapture:    hasCapture,
+		startedAt:     time.Now(),
+		modelTokSec:   make(map[string]*modelMetrics),
+		modelStreaming: make(map[string]*streamingState),
+		samples:       make([]sample, 0, sparkBuckets),
 	}
 }
 
-// Run starts the aggregator loop. It receives from ollamaCh and captureCh,
-// merges the data, collects system metrics, and sends DisplaySnapshot values
-// on displayCh. captureCh may be nil if capture is not available.
-// A 1-second ticker ensures the display refreshes continuously.
+// Run starts the aggregator loop. It receives from ollamaCh, captureCh, and
+// streamingCh, merges the data, collects system metrics, and sends
+// DisplaySnapshot values on displayCh. captureCh and streamingCh may be nil
+// if capture is not available.
 // Run blocks until ctx is cancelled.
-func (a *Aggregator) Run(ctx context.Context, ollamaCh <-chan ollama.Snapshot, captureCh <-chan capture.EvalMetrics, displayCh chan<- DisplaySnapshot) error {
+func (a *Aggregator) Run(ctx context.Context, ollamaCh <-chan ollama.Snapshot, captureCh <-chan capture.EvalMetrics, streamingCh <-chan capture.StreamingMetrics, displayCh chan<- DisplaySnapshot) error {
 	slog.Info("aggregator starting", "has_capture", a.hasCapture)
 
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
 	for {
-		if captureCh != nil {
-			select {
-			case <-ctx.Done():
-				slog.Info("aggregator stopping")
-				return ctx.Err()
-			case snap, ok := <-ollamaCh:
-				if !ok {
-					slog.Warn("ollama channel closed")
-					return nil
-				}
-				a.handleOllamaSnapshot(snap)
-			case metrics, ok := <-captureCh:
-				if !ok {
-					slog.Warn("capture channel closed, switching to degraded mode")
-					captureCh = nil
-					continue
-				}
-				a.handleCaptureMetrics(metrics)
-			case <-ticker.C:
-				a.sendDisplay(ctx, displayCh)
+		select {
+		case <-ctx.Done():
+			slog.Info("aggregator stopping")
+			return ctx.Err()
+
+		case snap, ok := <-ollamaCh:
+			if !ok {
+				slog.Warn("ollama channel closed")
+				return nil
 			}
-		} else {
-			select {
-			case <-ctx.Done():
-				slog.Info("aggregator stopping")
-				return ctx.Err()
-			case snap, ok := <-ollamaCh:
-				if !ok {
-					slog.Warn("ollama channel closed")
-					return nil
-				}
-				a.handleOllamaSnapshot(snap)
-			case <-ticker.C:
-				a.sendDisplay(ctx, displayCh)
+			a.handleOllamaSnapshot(snap)
+
+		case metrics, ok := <-readCaptureCh(captureCh):
+			if !ok {
+				slog.Warn("capture channel closed, switching to degraded mode")
+				captureCh = nil
+				continue
 			}
+			a.handleCaptureMetrics(metrics)
+
+		case sm, ok := <-readStreamingCh(streamingCh):
+			if !ok {
+				slog.Warn("streaming channel closed")
+				streamingCh = nil
+				continue
+			}
+			a.handleStreamingMetrics(sm)
+
+		case <-ticker.C:
+			a.sendDisplay(ctx, displayCh)
 		}
 	}
+}
+
+// readCaptureCh returns the channel or a nil channel if the input is nil.
+// A nil channel blocks forever in select, effectively disabling that case.
+func readCaptureCh(ch <-chan capture.EvalMetrics) <-chan capture.EvalMetrics {
+	return ch
+}
+
+func readStreamingCh(ch <-chan capture.StreamingMetrics) <-chan capture.StreamingMetrics {
+	return ch
 }
 
 func (a *Aggregator) handleOllamaSnapshot(snap ollama.Snapshot) {
@@ -144,7 +161,52 @@ func (a *Aggregator) handleCaptureMetrics(m capture.EvalMetrics) {
 	)
 }
 
-// prunesamples removes samples older than historyWindow.
+func (a *Aggregator) handleStreamingMetrics(sm capture.StreamingMetrics) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	state, ok := a.modelStreaming[sm.Model]
+	if !ok {
+		state = &streamingState{}
+		a.modelStreaming[sm.Model] = state
+	}
+
+	state.lastUpdate = sm.Timestamp
+	state.liveTokPerSec = sm.LiveTokPerSec
+	if sm.TTFT > 0 {
+		state.ttft = sm.TTFT
+	}
+
+	if sm.Active {
+		// New stream became active — increment if this is a fresh start
+		// We track this simply: active=true means at least 1 stream is active
+		state.activeStreams = max(1, state.activeStreams)
+	} else {
+		// Stream ended
+		state.activeStreams = max(0, state.activeStreams-1)
+		if state.activeStreams == 0 {
+			state.liveTokPerSec = 0
+		}
+	}
+
+	// Also record as a sparkline sample when actively streaming
+	if sm.Active && sm.LiveTokPerSec > 0 {
+		a.samples = append(a.samples, sample{
+			tokPS: sm.LiveTokPerSec,
+			ts:    sm.Timestamp,
+		})
+	}
+
+	slog.Debug("streaming metrics update",
+		"model", sm.Model,
+		"live_tps", sm.LiveTokPerSec,
+		"ttft", sm.TTFT,
+		"active", sm.Active,
+		"active_streams", state.activeStreams,
+	)
+}
+
+// pruneSamples removes samples older than historyWindow.
 func (a *Aggregator) pruneSamples(now time.Time) {
 	cutoff := now.Add(-historyWindow)
 	i := 0
@@ -191,18 +253,34 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 			}
 		}
 
-		// Merge capture data if available — but zero it out if stale
+		// Merge streaming data (live tok/s) if available and fresh
+		if ss, ok := a.modelStreaming[m.Name]; ok {
+			if now.Sub(ss.lastUpdate) < streamActiveThreshold {
+				md.LiveTokPerSec = ss.liveTokPerSec
+				md.ActiveRequests = ss.activeStreams
+				md.TTFT = ss.ttft
+				if ss.activeStreams > 0 {
+					md.Status = "running"
+				}
+			}
+		}
+
+		// Merge capture data (final tok/s) if available — but zero it out if stale
 		if mm, ok := a.modelTokSec[m.Name]; ok {
 			if now.Sub(mm.lastSeen) < activeThreshold {
 				md.CurrentTokPerSec = mm.lastMetrics.TokPerSec()
 				md.PromptTokPerSec = mm.lastMetrics.PromptTokPerSec()
-				md.Status = "running"
+				if md.Status == "" {
+					md.Status = "running"
+				}
 			} else {
 				md.CurrentTokPerSec = 0
 				md.PromptTokPerSec = 0
-				md.Status = "idle"
+				if md.Status == "" {
+					md.Status = "idle"
+				}
 			}
-		} else {
+		} else if md.Status == "" {
 			md.Status = "idle"
 		}
 
@@ -210,12 +288,17 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 	}
 
 	// Build time-bucketed sparkline history from samples.
-	// Each bucket covers bucketWidth (5s). We average samples within each bucket.
 	tokHist, promptHist := a.buildSparklineHistory(now)
 
-	// Current tok/s is the most recent bucket value (or 0 if empty)
+	// Current tok/s: prefer live streaming value, fall back to latest bucket
 	var currentTPS, currentPTPS float64
-	if len(tokHist) > 0 {
+	for _, ss := range a.modelStreaming {
+		if now.Sub(ss.lastUpdate) < streamActiveThreshold && ss.liveTokPerSec > 0 {
+			currentTPS += ss.liveTokPerSec
+		}
+	}
+	// If no live streaming data, use last bucket
+	if currentTPS == 0 && len(tokHist) > 0 {
 		currentTPS = tokHist[len(tokHist)-1]
 	}
 	if len(promptHist) > 0 {
@@ -233,7 +316,7 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 		}
 	}
 
-	// WindowStart = left edge of the sparkline: the later of app start or now-5min
+	// WindowStart = left edge of the sparkline
 	windowStart := now.Add(-historyWindow)
 	if a.startedAt.After(windowStart) {
 		windowStart = a.startedAt
