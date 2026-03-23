@@ -37,10 +37,12 @@ type ThroughputInfo struct {
 	ActiveBuckets    int       // how many trailing buckets the app has been running for
 }
 
-// SystemInfo contains CPU and memory metrics.
+// SystemInfo contains CPU, GPU, and memory metrics.
 type SystemInfo struct {
-	CPUPercent float64
-	MemUsed    uint64
-	MemTotal   uint64
-	MemPercent float64
+	CPUPercent  float64
+	GPUPercent  float64 // Apple Silicon device utilization %
+	GPUAvail    bool    // whether GPU metrics are available
+	MemUsed     uint64
+	MemTotal    uint64
+	MemPercent  float64
 }

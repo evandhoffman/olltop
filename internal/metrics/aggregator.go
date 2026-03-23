@@ -315,6 +315,13 @@ func collectSystemInfo() SystemInfo {
 		info.CPUPercent = cpuPcts[0]
 	}
 
+	// GPU (Apple Silicon via IOKit)
+	gpuStats := getGPUStats()
+	info.GPUAvail = gpuStats.Available
+	if gpuStats.Available {
+		info.GPUPercent = float64(gpuStats.DeviceUtilization)
+	}
+
 	// Memory
 	vmStat, err := mem.VirtualMemory()
 	if err != nil {

@@ -405,12 +405,19 @@ func (m Model) renderSystem(inner int) string {
 	cpuBar := renderBar(sys.CPUPercent, 10)
 	cpuPct := fmt.Sprintf("%.0f%%", sys.CPUPercent)
 
+	var gpuSection string
+	if sys.GPUAvail {
+		gpuBar := renderBar(sys.GPUPercent, 10)
+		gpuPct := fmt.Sprintf("%.0f%%", sys.GPUPercent)
+		gpuSection = fmt.Sprintf("  GPU  %s  %-6s", gpuBar, gpuPct)
+	}
+
 	memUsed := formatBytesUint64(sys.MemUsed)
 	memTotal := formatBytesUint64(sys.MemTotal)
 	memPct := fmt.Sprintf("%.0f%%", sys.MemPercent)
 
-	line := fmt.Sprintf(" CPU  %s  %-6s     RAM  %s / %s  (%s)",
-		cpuBar, cpuPct, memUsed, memTotal, memPct)
+	line := fmt.Sprintf(" CPU  %s  %-6s%s  RAM  %s / %s  (%s)",
+		cpuBar, cpuPct, gpuSection, memUsed, memTotal, memPct)
 
 	var b strings.Builder
 	b.WriteString(m.renderBorderedLine(inner, line))
