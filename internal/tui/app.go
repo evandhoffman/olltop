@@ -180,9 +180,14 @@ func (m Model) View() string {
 		return ""
 	}
 
+	// Warn if terminal is too small for the layout
+	if m.height > 0 && (m.width < 80 || m.height < 24) {
+		return warnStyle.Render(fmt.Sprintf(" Terminal too small (%dx%d). Resize to at least 80x24.", m.width, m.height))
+	}
+
 	w := m.width
-	if w < 40 {
-		w = 40
+	if w < 80 {
+		w = 80
 	}
 
 	inner := w - 4 // content width inside borders
@@ -312,15 +317,19 @@ func (m Model) renderModelsTable(inner int) string {
 	var b strings.Builder
 
 	const (
-		colModel   = 22
-		colSize    = 12
-		colVRAM    = 12
-		colTokSec  = 10
-		colTTFT    = 10
-		colStatus  = 10
-		colExpires = 10
+		colSize    = 8
+		colVRAM    = 8
+		colTokSec  = 7
+		colTTFT    = 7
+		colStatus  = 8
+		colExpires = 7
 	)
-	const fixedPrefixWidth = 1 + colModel + 1 + colSize + 1 + colVRAM + 1 + colTokSec + 1 + colTTFT + 1 + colStatus + 1
+	// MODEL column gets remaining width after fixed columns and 7 spacing chars.
+	fixedCols := colSize + colVRAM + colTokSec + colTTFT + colStatus + colExpires
+	colModel := inner - 7 - fixedCols
+	if colModel < 12 {
+		colModel = 12
+	}
 
 	// Column headers — highlight the active sort column
 	modelHdr, sizeHdr, vramHdr, tokHdr, ttftHdr, statusHdr, expiresHdr := "MODEL", "SIZE", "VRAM", "tok/s", "TTFT", "STATUS", "EXPIRES"
@@ -335,15 +344,6 @@ func (m Model) renderModelsTable(inner int) string {
 		statusHdr = "STATUS ▼"
 	}
 
-	expiresWidth := colExpires
-	if remaining := inner - fixedPrefixWidth; remaining < expiresWidth {
-		expiresWidth = remaining
-	}
-	if expiresWidth < 0 {
-		expiresWidth = 0
-	}
-	expiresHdr = truncate(expiresHdr, expiresWidth)
-
 	hdr := fmt.Sprintf(" %-*s %-*s %-*s %-*s %-*s %-*s %-*s",
 		colModel, modelHdr,
 		colSize, sizeHdr,
@@ -351,7 +351,7 @@ func (m Model) renderModelsTable(inner int) string {
 		colTokSec, tokHdr,
 		colTTFT, ttftHdr,
 		colStatus, statusHdr,
-		expiresWidth, padRight(expiresHdr, expiresWidth))
+		colExpires, expiresHdr)
 	b.WriteString(m.renderBorderedLine(inner, dimStyle.Render(hdr)))
 	b.WriteByte('\n')
 
@@ -449,7 +449,7 @@ func (m Model) renderModelsTable(inner int) string {
 			" " + padRight(tps, colTokSec) +
 			" " + padRight(ttft, colTTFT) +
 			" " + padRight(status, colStatus) +
-			" " + padRight(truncate(expires, expiresWidth), expiresWidth)
+			" " + padRight(truncate(expires, colExpires), colExpires)
 
 		b.WriteString(m.renderBorderedLine(inner, row))
 		b.WriteByte('\n')
@@ -643,143 +643,73 @@ func fanStyle(rpm float64) lipgloss.Style {
 func (m Model) renderSystem(inner int) string {
 	sys := m.snapshot.SystemInfo
 	sparkWidth := 8
-	labelWidth := 9
-
-	rows := []struct {
-		label string
-		value string
-		spark string
-	}{
-		{label: "RAM", value: m.renderMemoryCell(sys)},
-		{label: "CPU", value: m.renderCPUCell(sys)},
-		{label: "CPU Temp", value: m.renderCPUTempCell(sys), spark: m.renderCPUTempSpark(sys, sparkWidth)},
-		{label: "GPU", value: m.renderGPUCell(sys)},
-		{label: "GPU Temp", value: m.renderGPUTempCell(sys), spark: m.renderGPUTempSpark(sys, sparkWidth)},
-		{label: "Fan", value: m.renderFanCell(sys), spark: m.renderFanSpark(sys, sparkWidth)},
-	}
-
-	valueWidth := 12
-	for _, row := range rows {
-		if w := lipgloss.Width(row.value); w > valueWidth {
-			valueWidth = w
-		}
-	}
-	valueWidth += 2
-	sparkColWidth := sparkWidth
+	barWidth := 10
 
 	var b strings.Builder
-	for _, row := range rows {
-		line := padRight(row.label, labelWidth) + " " + padRight(row.value, valueWidth) + " " + padRight(row.spark, sparkColWidth)
-		b.WriteString(m.renderBorderedLine(inner, line))
+
+	// CPU row: bar + percentage + temperature + sparkline
+	cpuLine := " CPU  " + renderBar(sys.CPUPercent, barWidth) + fmt.Sprintf("  %3.0f%%", sys.CPUPercent)
+	if sys.SensorsAvail && sys.CPUTemp > 0 {
+		ts := tempStyle(sys.CPUTemp, 70, 90)
+		cpuLine += "  " + ts.Render(fmt.Sprintf("%.0f°C", sys.CPUTemp))
+		if len(sys.CPUHistory) > 0 {
+			cpuLine += " " + buildSparklineStyled(sys.CPUHistory, sparkWidth, sys.ActiveBuckets, ts)
+		}
+	}
+	b.WriteString(m.renderBorderedLine(inner, cpuLine))
+	b.WriteByte('\n')
+
+	// GPU row: bar + percentage + temperature + sparkline
+	if sys.GPUAvail {
+		gpuLine := " GPU  " + renderBar(sys.GPUPercent, barWidth) + fmt.Sprintf("  %3.0f%%", sys.GPUPercent)
+		if sys.SensorsAvail && sys.GPUTemp > 0 {
+			ts := tempStyle(sys.GPUTemp, 75, 95)
+			gpuLine += "  " + ts.Render(fmt.Sprintf("%.0f°C", sys.GPUTemp))
+			if len(sys.GPUHistory) > 0 {
+				gpuLine += " " + buildSparklineStyled(sys.GPUHistory, sparkWidth, sys.ActiveBuckets, ts)
+			}
+		}
+		b.WriteString(m.renderBorderedLine(inner, gpuLine))
 		b.WriteByte('\n')
 	}
-	return b.String()
-}
 
-func (m Model) renderCPUCell(sys metrics.SystemInfo) string {
-	cpuBar := renderBar(sys.CPUPercent, 10)
-	return fmt.Sprintf("CPU  %s  %-4s", cpuBar, fmt.Sprintf("%.0f%%", sys.CPUPercent))
-}
+	// RAM row: bar + percentage + used/total
+	ramLine := " RAM  " + renderBar(sys.MemPercent, barWidth) + fmt.Sprintf("  %3.0f%%", sys.MemPercent) +
+		"  " + formatBytesUint64(sys.MemUsed) + " / " + formatBytesUint64(sys.MemTotal)
+	b.WriteString(m.renderBorderedLine(inner, ramLine))
+	b.WriteByte('\n')
 
-func (m Model) renderCPUTempCell(sys metrics.SystemInfo) string {
-	if !sys.SensorsAvail || sys.CPUTemp <= 0 {
-		return dimStyle.Render("—")
-	}
-	style := tempStyle(sys.CPUTemp, 70, 90)
-	return style.Render(fmt.Sprintf("%.0f°C", sys.CPUTemp))
-}
-
-func (m Model) renderCPUTempSpark(sys metrics.SystemInfo, sparkWidth int) string {
-	if !sys.SensorsAvail || sys.CPUTemp <= 0 || len(sys.CPUHistory) == 0 {
-		return ""
-	}
-	style := tempStyle(sys.CPUTemp, 70, 90)
-	return buildSparklineStyled(sys.CPUHistory, sparkWidth, sys.ActiveBuckets, style)
-}
-
-func (m Model) renderGPUCell(sys metrics.SystemInfo) string {
-	if !sys.GPUAvail {
-		return dimStyle.Render("—")
-	}
-
-	gpuBar := renderBar(sys.GPUPercent, 10)
-	return fmt.Sprintf("GPU  %s  %-4s", gpuBar, fmt.Sprintf("%.0f%%", sys.GPUPercent))
-}
-
-func (m Model) renderGPUTempCell(sys metrics.SystemInfo) string {
-	if !sys.GPUAvail {
-		return dimStyle.Render("—")
-	}
-	if !sys.SensorsAvail || sys.GPUTemp <= 0 {
-		return dimStyle.Render("—")
-	}
-
-	style := tempStyle(sys.GPUTemp, 75, 95)
-	return style.Render(fmt.Sprintf("%.0f°C", sys.GPUTemp))
-}
-
-func (m Model) renderGPUTempSpark(sys metrics.SystemInfo, sparkWidth int) string {
-	if !sys.GPUAvail || !sys.SensorsAvail || sys.GPUTemp <= 0 || len(sys.GPUHistory) == 0 {
-		return ""
-	}
-	style := tempStyle(sys.GPUTemp, 75, 95)
-	return buildSparklineStyled(sys.GPUHistory, sparkWidth, sys.ActiveBuckets, style)
-}
-
-func (m Model) renderMemoryCell(sys metrics.SystemInfo) string {
-	memUsed := formatBytesUint64(sys.MemUsed)
-	memTotal := formatBytesUint64(sys.MemTotal)
-	memPct := fmt.Sprintf("%.0f%%", sys.MemPercent)
-	memBar := renderBar(sys.MemPercent, 10)
-	return fmt.Sprintf("RAM  %s  %s / %s  (%s)", memBar, memUsed, memTotal, memPct)
-}
-
-func (m Model) renderFanCell(sys metrics.SystemInfo) string {
-	if !sys.SensorsAvail || len(sys.FanSpeeds) == 0 {
-		return dimStyle.Render("—")
-	}
-
-	maxRPM := 0.0
-	for _, rpm := range sys.FanSpeeds {
-		if rpm > maxRPM {
-			maxRPM = rpm
-		}
-	}
-	if maxRPM <= 0 {
-		return dimStyle.Render("idle")
-	}
-	style := fanStyle(maxRPM)
-
-	var rpmText string
-	if len(sys.FanSpeeds) == 1 {
-		rpmText = fmt.Sprintf("%.0f RPM", sys.FanSpeeds[0])
-	} else {
-		parts := make([]string, 0, len(sys.FanSpeeds))
+	// Fan row: RPM + sparkline (only if sensors available)
+	if sys.SensorsAvail && len(sys.FanSpeeds) > 0 {
+		var fanLine string
+		maxRPM := 0.0
 		for _, rpm := range sys.FanSpeeds {
-			parts = append(parts, fmt.Sprintf("%.0f", rpm))
+			if rpm > maxRPM {
+				maxRPM = rpm
+			}
 		}
-		rpmText = fmt.Sprintf("%s RPM", strings.Join(parts, "/"))
-	}
-
-	return style.Render(rpmText)
-}
-
-func (m Model) renderFanSpark(sys metrics.SystemInfo, sparkWidth int) string {
-	if !sys.SensorsAvail || len(sys.FanSpeeds) == 0 || len(sys.FanHistory) == 0 {
-		return ""
-	}
-
-	maxRPM := 0.0
-	for _, rpm := range sys.FanSpeeds {
-		if rpm > maxRPM {
-			maxRPM = rpm
+		if maxRPM <= 0 {
+			fanLine = " Fan  " + dimStyle.Render("idle")
+		} else {
+			fs := fanStyle(maxRPM)
+			if len(sys.FanSpeeds) == 1 {
+				fanLine = " Fan  " + fs.Render(fmt.Sprintf("%.0f RPM", sys.FanSpeeds[0]))
+			} else {
+				parts := make([]string, len(sys.FanSpeeds))
+				for i, rpm := range sys.FanSpeeds {
+					parts[i] = fmt.Sprintf("%.0f", rpm)
+				}
+				fanLine = " Fan  " + fs.Render(strings.Join(parts, "/")+" RPM")
+			}
+			if len(sys.FanHistory) > 0 {
+				fanLine += "  " + buildSparklineStyled(sys.FanHistory, sparkWidth, sys.ActiveBuckets, fs)
+			}
 		}
+		b.WriteString(m.renderBorderedLine(inner, fanLine))
+		b.WriteByte('\n')
 	}
-	if maxRPM <= 0 {
-		return ""
-	}
-	style := fanStyle(maxRPM)
-	return " " + buildSparklineStyled(sys.FanHistory, sparkWidth, sys.ActiveBuckets, style)
+
+	return b.String()
 }
 
 func renderBar(pct float64, width int) string {

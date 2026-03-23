@@ -110,24 +110,16 @@ func TestViewConnectedAndDisconnected(t *testing.T) {
 	if !strings.ContainsAny(out, "▁▂▃▄▅▆▇█") {
 		t.Fatalf("connected view missing sparkline blocks\n%s", out)
 	}
-	var positions []int
+	// Verify system rows have temperature sparklines
+	var sparkCount int
 	for _, line := range strings.Split(out, "\n") {
 		clean := stripAnsi(line)
-		if strings.Contains(clean, "CPU Temp") || strings.Contains(clean, "GPU Temp") || strings.Contains(clean, "Fan") {
-			pos := strings.IndexAny(clean, "▁▂▃▄▅▆▇█")
-			if pos < 0 {
-				t.Fatalf("missing sparkline in aligned system row: %q", clean)
-			}
-			positions = append(positions, pos)
+		if strings.ContainsAny(clean, "▁▂▃▄▅▆▇█") && strings.Contains(clean, "°C") {
+			sparkCount++
 		}
 	}
-	if len(positions) != 3 {
-		t.Fatalf("expected 3 aligned spark rows, got %d", len(positions))
-	}
-	for i := 1; i < len(positions); i++ {
-		if positions[i] != positions[0] {
-			t.Fatalf("sparkline columns not aligned: %v", positions)
-		}
+	if sparkCount < 2 {
+		t.Fatalf("expected at least 2 system rows with temp sparklines, got %d", sparkCount)
 	}
 
 	disconnected := NewModel("http://localhost:11434")
@@ -200,8 +192,11 @@ func TestAdditionalRenderingBranches(t *testing.T) {
 	if got := m.fanSpinner(500); got == "·" {
 		t.Fatalf("fanSpinner(500) should animate, got %q", got)
 	}
-	if got := m.renderFanCell(metrics.SystemInfo{SensorsAvail: true, FanSpeeds: []float64{0}}); !strings.Contains(got, "idle") {
-		t.Fatalf("expected idle fan display, got %q", got)
+	// Test fan idle display via renderSystem
+	fanModel := NewModel("http://localhost:11434")
+	fanModel.snapshot.SystemInfo = metrics.SystemInfo{SensorsAvail: true, FanSpeeds: []float64{0}}
+	if got := fanModel.renderSystem(76); !strings.Contains(got, "idle") {
+		t.Fatalf("expected idle fan display in system section, got %q", got)
 	}
 
 	if got := tempStyle(95, 70, 90).Render("95°C"); got == "" {
@@ -250,15 +245,17 @@ func TestRenderModelsTableFitsNarrowWidth(t *testing.T) {
 		Status:    "idle",
 	}}
 
-	inner := 84
-	out := m.renderModelsTable(inner)
-	for _, line := range strings.Split(out, "\n") {
-		clean := stripAnsi(line)
-		if clean == "" {
-			continue
-		}
-		if got := lipgloss.Width(clean); got > inner+4 {
-			t.Fatalf("line width = %d, want <= %d\n%s", got, inner+4, clean)
+	// Test at both 84 and 76 (minimum 80-col terminal) inner widths.
+	for _, inner := range []int{84, 76} {
+		out := m.renderModelsTable(inner)
+		for _, line := range strings.Split(out, "\n") {
+			clean := stripAnsi(line)
+			if clean == "" {
+				continue
+			}
+			if got := lipgloss.Width(clean); got > inner+4 {
+				t.Fatalf("inner=%d: line width = %d, want <= %d\n%s", inner, got, inner+4, clean)
+			}
 		}
 	}
 }
