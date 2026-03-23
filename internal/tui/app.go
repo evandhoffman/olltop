@@ -304,11 +304,17 @@ func (m Model) renderThroughput(inner int) string {
 		return b.String()
 	}
 
-	tokLine := renderSparkRow("tok/s  ", m.snapshot.TokPerSec.TokPerSecHistory, m.snapshot.TokPerSec.CurrentTokPerSec)
+	tp := m.snapshot.TokPerSec
+	sinceStr := ""
+	if !tp.WindowStart.IsZero() {
+		sinceStr = tp.WindowStart.Local().Format("3:04 PM")
+	}
+
+	tokLine := renderSparkRow("tok/s  ", tp.TokPerSecHistory, tp.CurrentTokPerSec, tp.MaxTokPerSec, sinceStr)
 	b.WriteString(m.renderBorderedLine(inner, tokLine))
 	b.WriteByte('\n')
 
-	promptLine := renderSparkRow("prompt ", m.snapshot.TokPerSec.PromptTPSHistory, m.snapshot.TokPerSec.CurrentPromptTPS)
+	promptLine := renderSparkRow("prompt ", tp.PromptTPSHistory, tp.CurrentPromptTPS, tp.MaxPromptTPS, sinceStr)
 	b.WriteString(m.renderBorderedLine(inner, promptLine))
 	b.WriteByte('\n')
 
@@ -317,15 +323,24 @@ func (m Model) renderThroughput(inner int) string {
 	return b.String()
 }
 
-func renderSparkRow(label string, history []float64, current float64) string {
+func renderSparkRow(label string, history []float64, current, maxVal float64, since string) string {
 	spark := buildSparkline(history, 20)
 	var val string
 	if current > 0 {
 		val = tokSecStyle.Render(fmt.Sprintf("%.1f tok/s", current))
 	} else {
-		val = dimStyle.Render("\u2014")
+		val = dimStyle.Render("0.0 tok/s")
 	}
-	return " " + dimStyle.Render(label) + " " + sparkStyle.Render(spark) + "   " + val
+
+	var suffix string
+	if maxVal > 0 {
+		suffix = dimStyle.Render(fmt.Sprintf("  max %.1f", maxVal))
+		if since != "" {
+			suffix += dimStyle.Render(fmt.Sprintf("  since %s", since))
+		}
+	}
+
+	return " " + dimStyle.Render(label) + " " + sparkStyle.Render(spark) + "   " + val + suffix
 }
 
 func buildSparkline(data []float64, width int) string {

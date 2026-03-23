@@ -31,6 +31,9 @@ type ThroughputInfo struct {
 	CurrentPromptTPS float64
 	TokPerSecHistory []float64 // last 60 samples for sparkline
 	PromptTPSHistory []float64
+	MaxTokPerSec     float64   // peak tok/s in current window
+	MaxPromptTPS     float64   // peak prompt tok/s in current window
+	WindowStart      time.Time // oldest data point in the window
 }
 
 // SystemInfo contains CPU and memory metrics.

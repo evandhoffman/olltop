@@ -220,6 +220,21 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 		currentPTPS = promptHist[len(promptHist)-1]
 	}
 
+	// Compute max and window start from samples
+	var maxTPS, maxPTPS float64
+	var windowStart time.Time
+	for _, s := range a.samples {
+		if s.tokPS > maxTPS {
+			maxTPS = s.tokPS
+		}
+		if s.promptPS > maxPTPS {
+			maxPTPS = s.promptPS
+		}
+	}
+	if len(a.samples) > 0 {
+		windowStart = a.samples[0].ts
+	}
+
 	sysInfo := collectSystemInfo()
 
 	return DisplaySnapshot{
@@ -230,6 +245,9 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 			CurrentPromptTPS: currentPTPS,
 			TokPerSecHistory: tokHist,
 			PromptTPSHistory: promptHist,
+			MaxTokPerSec:     maxTPS,
+			MaxPromptTPS:     maxPTPS,
+			WindowStart:      windowStart,
 		},
 		Connected:  snap.Connected,
 		Version:    snap.Version,
