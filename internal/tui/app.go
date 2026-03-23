@@ -400,6 +400,30 @@ func buildSparkline(data []float64, width, activeBuckets int) string {
 	return sb.String()
 }
 
+// tempStyle returns a lipgloss style colored by temperature severity.
+func tempStyle(temp float64, warnThresh, critThresh float64) lipgloss.Style {
+	switch {
+	case temp >= critThresh:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // red
+	case temp >= warnThresh:
+		return lipgloss.NewStyle().Foreground(warnColor) // amber
+	default:
+		return lipgloss.NewStyle().Foreground(accentColor) // green
+	}
+}
+
+// fanStyle returns a lipgloss style colored by fan speed severity.
+func fanStyle(rpm float64) lipgloss.Style {
+	switch {
+	case rpm > 5000:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // red
+	case rpm > 3000:
+		return lipgloss.NewStyle().Foreground(warnColor) // amber
+	default:
+		return lipgloss.NewStyle().Foreground(accentColor) // green
+	}
+}
+
 func (m Model) renderSystem(inner int) string {
 	sys := m.snapshot.SystemInfo
 
@@ -407,7 +431,8 @@ func (m Model) renderSystem(inner int) string {
 	cpuBar := renderBar(sys.CPUPercent, 10)
 	cpuPart := fmt.Sprintf(" CPU  %s  %-4s", cpuBar, fmt.Sprintf("%.0f%%", sys.CPUPercent))
 	if sys.SensorsAvail && sys.CPUTemp > 0 {
-		cpuPart += dimStyle.Render(fmt.Sprintf(" %.0f°C", sys.CPUTemp))
+		style := tempStyle(sys.CPUTemp, 70, 90)
+		cpuPart += " " + style.Render(fmt.Sprintf("%.0f°C", sys.CPUTemp))
 	}
 
 	var gpuPart string
@@ -415,7 +440,8 @@ func (m Model) renderSystem(inner int) string {
 		gpuBar := renderBar(sys.GPUPercent, 10)
 		gpuPart = fmt.Sprintf("   GPU  %s  %-4s", gpuBar, fmt.Sprintf("%.0f%%", sys.GPUPercent))
 		if sys.SensorsAvail && sys.GPUTemp > 0 {
-			gpuPart += dimStyle.Render(fmt.Sprintf(" %.0f°C", sys.GPUTemp))
+			style := tempStyle(sys.GPUTemp, 75, 95)
+			gpuPart += " " + style.Render(fmt.Sprintf("%.0f°C", sys.GPUTemp))
 		}
 	}
 
@@ -427,8 +453,17 @@ func (m Model) renderSystem(inner int) string {
 
 	var fanPart string
 	if sys.SensorsAvail && len(sys.FanSpeeds) > 0 {
+		// Use max fan speed for color
+		maxRPM := 0.0
+		for _, rpm := range sys.FanSpeeds {
+			if rpm > maxRPM {
+				maxRPM = rpm
+			}
+		}
+		style := fanStyle(maxRPM)
+
 		if len(sys.FanSpeeds) == 1 {
-			fanPart = dimStyle.Render(fmt.Sprintf("   Fan %.0f RPM", sys.FanSpeeds[0]))
+			fanPart = "   " + dimStyle.Render("Fan ") + style.Render(fmt.Sprintf("%.0f RPM", sys.FanSpeeds[0]))
 		} else {
 			parts := ""
 			for i, rpm := range sys.FanSpeeds {
@@ -437,7 +472,7 @@ func (m Model) renderSystem(inner int) string {
 				}
 				parts += fmt.Sprintf("%.0f", rpm)
 			}
-			fanPart = dimStyle.Render(fmt.Sprintf("   Fans %s RPM", parts))
+			fanPart = "   " + dimStyle.Render("Fans ") + style.Render(fmt.Sprintf("%s RPM", parts))
 		}
 	}
 
