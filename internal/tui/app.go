@@ -734,7 +734,7 @@ func (m Model) renderSystem(inner int) string {
 	// GPU row: bar + percentage + temperature + sparkline
 	if sys.GPUAvail {
 		gpuLine := " GPU  " + renderBar(sys.GPUPercent, barWidth) + fmt.Sprintf("  %3.0f%%", sys.GPUPercent)
-		if sys.SensorsAvail && sys.GPUTemp > 0 {
+		if sys.SensorsAvail && sys.GPUTemp > 5 {
 			ts := tempStyle(sys.GPUTemp, 75, 95)
 			gpuLine += "  " + ts.Render(fmt.Sprintf("%3.0f°C", sys.GPUTemp))
 			if len(sys.GPUHistory) > 0 {

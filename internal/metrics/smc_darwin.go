@@ -207,11 +207,17 @@ static sensor_data_t read_sensors() {
         }
     }
 
-    // GPU temperature — try common keys
-    const char *gpu_keys[] = {"Tg1b", "Tg0P", "TG0P", "Tg0a", NULL};
+    // GPU temperature — try common Apple Silicon keys (ordered newer-first).
+    // Threshold > 5 skips stale/wrong sensors that return near-zero on M4.
+    const char *gpu_keys[] = {
+        "Tg05", "Tg0D", "Tg0L", "Tg0T",  // M3/M4 era
+        "Tg0b", "Tg0f", "Tg0j", "Tg1d",  // other Apple Silicon variants
+        "Tg1b", "Tg0P", "TG0P", "Tg0a",  // older / M1/M2
+        NULL
+    };
     for (int i = 0; gpu_keys[i] != NULL; i++) {
         float t = smc_read_temp(gpu_keys[i]);
-        if (t > 0 && t < 150) {
+        if (t > 5 && t < 150) {
             data.gpu_temp = t;
             data.valid = 1;
             break;
