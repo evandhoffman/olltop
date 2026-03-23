@@ -615,14 +615,14 @@ func formatDuration(d time.Duration) string {
 }
 
 // fanSpinner returns the current fan animation frame. Higher RPM = faster spin.
-// At 200ms ticks: 0 RPM = no spin, 1000 RPM = slow, 3000+ RPM = every frame.
+// At 200ms ticks: 0 RPM = static, 500 RPM = ~1 rev/sec, 3000+ RPM = every frame.
 func (m Model) fanSpinner(rpm float64) string {
 	if rpm < 100 {
 		return "·" // essentially off
 	}
-	// Speed multiplier: at ~1000 RPM advance every ~4 ticks (0.8s),
-	// at 3000+ RPM advance every tick (0.2s)
-	speed := max(1, int(rpm/1000))
+	// Map RPM to speed multiplier with finer granularity:
+	// 100-399 RPM → 1, 400-799 → 2, 800-1199 → 3, ... 2800+ → 8 (max)
+	speed := max(1, min(8, int(rpm/400)+1))
 	frame := (m.tick * speed) % len(fanFrames)
 	return fanFrames[frame]
 }
