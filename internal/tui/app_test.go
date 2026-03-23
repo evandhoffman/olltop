@@ -94,10 +94,10 @@ func TestViewConnectedAndDisconnected(t *testing.T) {
 			CPUTemp:       73,
 			GPUTemp:       68,
 			FanSpeeds:     []float64{2100},
-			CPUHistory:    []float64{65, 68, 71, 73},
-			GPUHistory:    []float64{60, 62, 65, 68},
-			FanHistory:    []float64{1500, 1800, 2000, 2100},
-			ActiveBuckets: 4,
+			CPUHistory:    []float64{65, 66, 68, 69, 70, 71, 72, 73},
+			GPUHistory:    []float64{60, 61, 62, 64, 65, 66, 67, 68},
+			FanHistory:    []float64{1500, 1600, 1700, 1800, 1900, 2000, 2050, 2100},
+			ActiveBuckets: 8,
 		},
 	}
 
@@ -109,6 +109,25 @@ func TestViewConnectedAndDisconnected(t *testing.T) {
 	}
 	if !strings.ContainsAny(out, "▁▂▃▄▅▆▇█") {
 		t.Fatalf("connected view missing sparkline blocks\n%s", out)
+	}
+	var positions []int
+	for _, line := range strings.Split(out, "\n") {
+		clean := stripAnsi(line)
+		if strings.Contains(clean, "CPU Temp") || strings.Contains(clean, "GPU Temp") || strings.Contains(clean, "Fan") {
+			pos := strings.IndexAny(clean, "▁▂▃▄▅▆▇█")
+			if pos < 0 {
+				t.Fatalf("missing sparkline in aligned system row: %q", clean)
+			}
+			positions = append(positions, pos)
+		}
+	}
+	if len(positions) != 3 {
+		t.Fatalf("expected 3 aligned spark rows, got %d", len(positions))
+	}
+	for i := 1; i < len(positions); i++ {
+		if positions[i] != positions[0] {
+			t.Fatalf("sparkline columns not aligned: %v", positions)
+		}
 	}
 
 	disconnected := NewModel("http://localhost:11434")
@@ -180,6 +199,9 @@ func TestAdditionalRenderingBranches(t *testing.T) {
 	}
 	if got := m.fanSpinner(500); got == "·" {
 		t.Fatalf("fanSpinner(500) should animate, got %q", got)
+	}
+	if got := m.renderFanCell(metrics.SystemInfo{SensorsAvail: true, FanSpeeds: []float64{0}}); !strings.Contains(got, "idle") {
+		t.Fatalf("expected idle fan display, got %q", got)
 	}
 
 	if got := tempStyle(95, 70, 90).Render("95°C"); got == "" {
