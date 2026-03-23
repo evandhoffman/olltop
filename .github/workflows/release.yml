@@ -42,46 +42,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Generate changelog
-        id: changelog
-        run: |
-          PREV_TAG=$(git tag --sort=-creatordate | head -2 | tail -1 || echo "")
-          if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$GITHUB_REF_NAME" ]; then
-            CHANGES=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..${GITHUB_REF_NAME}")
-          else
-            CHANGES=$(git log --pretty=format:"- %s (%h)" HEAD~10..HEAD)
-          fi
-          {
-            echo "changes<<EOF"
-            echo "$CHANGES"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          append_body: true
           body: |
-            ## Changes
-
-            ${{ steps.changelog.outputs.changes }}
-
             ## Installation
 
-            Download the binary for your Mac architecture, make it executable, and run with sudo:
+            **Requires macOS on Apple Silicon (arm64).** Download the binary, make it executable, and run:
 
             ```bash
             chmod +x olltop-darwin-arm64
             sudo ./olltop-darwin-arm64
             ```
 
-            Running without sudo works but disables tok/s monitoring (requires pcap).
+            Running without `sudo` works but disables tok/s monitoring (requires pcap).
           files: |
             artifacts/olltop-darwin-arm64/olltop-darwin-arm64
