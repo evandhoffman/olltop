@@ -253,7 +253,7 @@ func (m Model) renderModelsTable(inner int) string {
 	}
 
 	for _, mdl := range m.snapshot.Models {
-		name := truncate(mdl.Name, colModel)
+		name := modelNameStyle.Render(truncate(mdl.Name, colModel))
 		size := formatBytes(mdl.Size)
 		vram := formatBytes(mdl.SizeVRAM)
 
@@ -273,17 +273,12 @@ func (m Model) renderModelsTable(inner int) string {
 
 		expires := formatDuration(mdl.ExpiresIn)
 
-		row := fmt.Sprintf(" %-*s %-*s %-*s",
-			colModel, modelNameStyle.Render(name),
-			colSize, size,
-			colVRAM, vram)
-
-		tpsVis := lipgloss.Width(tps)
-		statusVis := lipgloss.Width(status)
-
-		row += " " + tps + strings.Repeat(" ", max(0, colTokSec-1-tpsVis))
-		row += " " + status + strings.Repeat(" ", max(0, colStatus-1-statusVis))
-		row += " " + expires
+		row := " " + padRight(name, colModel) +
+			" " + padRight(size, colSize) +
+			" " + padRight(vram, colVRAM) +
+			" " + padRight(tps, colTokSec) +
+			" " + padRight(status, colStatus) +
+			" " + expires
 
 		b.WriteString(m.renderBorderedLine(inner, row))
 		b.WriteByte('\n')
@@ -433,6 +428,15 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm %02ds", m, s)
 	}
 	return fmt.Sprintf("%ds", s)
+}
+
+// padRight pads a (possibly ANSI-styled) string to the given visible width.
+func padRight(s string, width int) string {
+	vis := lipgloss.Width(s)
+	if vis >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-vis)
 }
 
 func truncate(s string, maxLen int) string {
