@@ -651,7 +651,7 @@ func (m Model) renderSystem(inner int) string {
 	cpuLine := " CPU  " + renderBar(sys.CPUPercent, barWidth) + fmt.Sprintf("  %3.0f%%", sys.CPUPercent)
 	if sys.SensorsAvail && sys.CPUTemp > 0 {
 		ts := tempStyle(sys.CPUTemp, 70, 90)
-		cpuLine += "  " + ts.Render(fmt.Sprintf("%.0f°C", sys.CPUTemp))
+		cpuLine += "  " + ts.Render(fmt.Sprintf("%3.0f°C", sys.CPUTemp))
 		if len(sys.CPUHistory) > 0 {
 			cpuLine += " " + buildSparklineStyled(sys.CPUHistory, sparkWidth, sys.ActiveBuckets, ts)
 		}
@@ -664,7 +664,7 @@ func (m Model) renderSystem(inner int) string {
 		gpuLine := " GPU  " + renderBar(sys.GPUPercent, barWidth) + fmt.Sprintf("  %3.0f%%", sys.GPUPercent)
 		if sys.SensorsAvail && sys.GPUTemp > 0 {
 			ts := tempStyle(sys.GPUTemp, 75, 95)
-			gpuLine += "  " + ts.Render(fmt.Sprintf("%.0f°C", sys.GPUTemp))
+			gpuLine += "  " + ts.Render(fmt.Sprintf("%3.0f°C", sys.GPUTemp))
 			if len(sys.GPUHistory) > 0 {
 				gpuLine += " " + buildSparklineStyled(sys.GPUHistory, sparkWidth, sys.ActiveBuckets, ts)
 			}
@@ -693,7 +693,7 @@ func (m Model) renderSystem(inner int) string {
 		} else {
 			fs := fanStyle(maxRPM)
 			if len(sys.FanSpeeds) == 1 {
-				fanLine = " Fan  " + fs.Render(fmt.Sprintf("%.0f RPM", sys.FanSpeeds[0]))
+				fanLine = " Fan  " + fs.Render(fmt.Sprintf("%4.0f RPM", sys.FanSpeeds[0]))
 			} else {
 				parts := make([]string, len(sys.FanSpeeds))
 				for i, rpm := range sys.FanSpeeds {
