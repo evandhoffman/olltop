@@ -7,7 +7,6 @@ package metrics
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <string.h>
-#include <stdlib.h>
 
 // SMC data types and structures
 #define KERNEL_INDEX_SMC 2
@@ -105,6 +104,13 @@ static int smc_read_key(const char *key, SMCVal_t *val) {
 
     val->dataSize = outputStruct.keyInfo.dataSize;
 
+    // Capture data type from keyinfo response BEFORE the read call overwrites outputStruct
+    val->dataType[0] = (outputStruct.keyInfo.dataType >> 24) & 0xff;
+    val->dataType[1] = (outputStruct.keyInfo.dataType >> 16) & 0xff;
+    val->dataType[2] = (outputStruct.keyInfo.dataType >> 8) & 0xff;
+    val->dataType[3] = outputStruct.keyInfo.dataType & 0xff;
+    val->dataType[4] = 0;
+
     inputStruct.keyInfo.dataSize = val->dataSize;
     inputStruct.data8 = SMC_CMD_READ_BYTES;
 
@@ -115,13 +121,6 @@ static int smc_read_key(const char *key, SMCVal_t *val) {
     memcpy(val->bytes, outputStruct.bytes, sizeof(val->bytes));
     strncpy(val->key, key, 4);
     val->key[4] = 0;
-
-    // Store data type
-    val->dataType[0] = (outputStruct.keyInfo.dataType >> 24) & 0xff;
-    val->dataType[1] = (outputStruct.keyInfo.dataType >> 16) & 0xff;
-    val->dataType[2] = (outputStruct.keyInfo.dataType >> 8) & 0xff;
-    val->dataType[3] = outputStruct.keyInfo.dataType & 0xff;
-    val->dataType[4] = 0;
 
     return 0;
 }
