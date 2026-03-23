@@ -623,72 +623,92 @@ func fanStyle(rpm float64) lipgloss.Style {
 func (m Model) renderSystem(inner int) string {
 	sys := m.snapshot.SystemInfo
 	sparkWidth := 8
+	cpuPart := m.renderCPUCell(sys, sparkWidth)
+	gpuPart := m.renderGPUCell(sys, sparkWidth)
+	memPart := m.renderMemoryCell(sys)
+	fanPart := m.renderFanCell(sys, sparkWidth)
 
-	// Line 1: CPU and GPU utilization with temps
-	cpuBar := renderBar(sys.CPUPercent, 10)
-	cpuPart := fmt.Sprintf(" CPU  %s  %-4s", cpuBar, fmt.Sprintf("%.0f%%", sys.CPUPercent))
-	if sys.SensorsAvail && sys.CPUTemp > 0 {
-		style := tempStyle(sys.CPUTemp, 70, 90)
-		cpuPart += " " + style.Render(fmt.Sprintf("%.0f°C", sys.CPUTemp))
-		if len(sys.CPUHistory) > 0 {
-			cpuPart += " " + buildSparklineStyled(sys.CPUHistory, sparkWidth, sys.ActiveBuckets, style)
-		}
-	}
-
-	var gpuPart string
-	if sys.GPUAvail {
-		gpuBar := renderBar(sys.GPUPercent, 10)
-		gpuPart = fmt.Sprintf("   GPU  %s  %-4s", gpuBar, fmt.Sprintf("%.0f%%", sys.GPUPercent))
-		if sys.SensorsAvail && sys.GPUTemp > 0 {
-			style := tempStyle(sys.GPUTemp, 75, 95)
-			gpuPart += " " + style.Render(fmt.Sprintf("%.0f°C", sys.GPUTemp))
-			if len(sys.GPUHistory) > 0 {
-				gpuPart += " " + buildSparklineStyled(sys.GPUHistory, sparkWidth, sys.ActiveBuckets, style)
-			}
-		}
-	}
-
-	// Line 2: RAM and fans
-	memUsed := formatBytesUint64(sys.MemUsed)
-	memTotal := formatBytesUint64(sys.MemTotal)
-	memPct := fmt.Sprintf("%.0f%%", sys.MemPercent)
-	memPart := fmt.Sprintf(" RAM  %s / %s  (%s)", memUsed, memTotal, memPct)
-
-	var fanPart string
-	if sys.SensorsAvail && len(sys.FanSpeeds) > 0 {
-		// Use max fan speed for color and animation
-		maxRPM := 0.0
-		for _, rpm := range sys.FanSpeeds {
-			if rpm > maxRPM {
-				maxRPM = rpm
-			}
-		}
-		style := fanStyle(maxRPM)
-		spinner := m.fanSpinner(maxRPM)
-
-		if len(sys.FanSpeeds) == 1 {
-			fanPart = "   " + style.Render(spinner) + dimStyle.Render(" Fan ") + style.Render(fmt.Sprintf("%.0f RPM", sys.FanSpeeds[0]))
-		} else {
-			parts := ""
-			for i, rpm := range sys.FanSpeeds {
-				if i > 0 {
-					parts += "/"
-				}
-				parts += fmt.Sprintf("%.0f", rpm)
-			}
-			fanPart = "   " + style.Render(spinner) + dimStyle.Render(" Fans ") + style.Render(fmt.Sprintf("%s RPM", parts))
-		}
-		if len(sys.FanHistory) > 0 {
-			fanPart += " " + buildSparklineStyled(sys.FanHistory, sparkWidth, sys.ActiveBuckets, style)
-		}
+	cellWidth := (inner - 2) / 2
+	if cellWidth < 1 {
+		cellWidth = 1
 	}
 
 	var b strings.Builder
-	b.WriteString(m.renderBorderedLine(inner, cpuPart+gpuPart))
+	b.WriteString(m.renderBorderedLine(inner, padRight(cpuPart, cellWidth)+"  "+gpuPart))
 	b.WriteByte('\n')
-	b.WriteString(m.renderBorderedLine(inner, memPart+fanPart))
+	b.WriteString(m.renderBorderedLine(inner, padRight(memPart, cellWidth)+"  "+fanPart))
 	b.WriteByte('\n')
 	return b.String()
+}
+
+func (m Model) renderCPUCell(sys metrics.SystemInfo, sparkWidth int) string {
+	cpuBar := renderBar(sys.CPUPercent, 10)
+	cell := fmt.Sprintf("CPU  %s  %-4s", cpuBar, fmt.Sprintf("%.0f%%", sys.CPUPercent))
+	if sys.SensorsAvail && sys.CPUTemp > 0 {
+		style := tempStyle(sys.CPUTemp, 70, 90)
+		cell += " " + style.Render(fmt.Sprintf("%.0f°C", sys.CPUTemp))
+		if len(sys.CPUHistory) > 0 {
+			cell += " " + buildSparklineStyled(sys.CPUHistory, sparkWidth, sys.ActiveBuckets, style)
+		}
+	}
+	return cell
+}
+
+func (m Model) renderGPUCell(sys metrics.SystemInfo, sparkWidth int) string {
+	if !sys.GPUAvail {
+		return dimStyle.Render("GPU  —")
+	}
+
+	gpuBar := renderBar(sys.GPUPercent, 10)
+	cell := fmt.Sprintf("GPU  %s  %-4s", gpuBar, fmt.Sprintf("%.0f%%", sys.GPUPercent))
+	if sys.SensorsAvail && sys.GPUTemp > 0 {
+		style := tempStyle(sys.GPUTemp, 75, 95)
+		cell += " " + style.Render(fmt.Sprintf("%.0f°C", sys.GPUTemp))
+		if len(sys.GPUHistory) > 0 {
+			cell += " " + buildSparklineStyled(sys.GPUHistory, sparkWidth, sys.ActiveBuckets, style)
+		}
+	}
+	return cell
+}
+
+func (m Model) renderMemoryCell(sys metrics.SystemInfo) string {
+	memUsed := formatBytesUint64(sys.MemUsed)
+	memTotal := formatBytesUint64(sys.MemTotal)
+	memPct := fmt.Sprintf("%.0f%%", sys.MemPercent)
+	memBar := renderBar(sys.MemPercent, 10)
+	return fmt.Sprintf("RAM  %s  %s / %s  (%s)", memBar, memUsed, memTotal, memPct)
+}
+
+func (m Model) renderFanCell(sys metrics.SystemInfo, sparkWidth int) string {
+	if !sys.SensorsAvail || len(sys.FanSpeeds) == 0 {
+		return dimStyle.Render("Fans  —")
+	}
+
+	maxRPM := 0.0
+	for _, rpm := range sys.FanSpeeds {
+		if rpm > maxRPM {
+			maxRPM = rpm
+		}
+	}
+	style := fanStyle(maxRPM)
+	spinner := m.fanSpinner(maxRPM)
+
+	var rpmText string
+	if len(sys.FanSpeeds) == 1 {
+		rpmText = fmt.Sprintf("%.0f RPM", sys.FanSpeeds[0])
+	} else {
+		parts := make([]string, 0, len(sys.FanSpeeds))
+		for _, rpm := range sys.FanSpeeds {
+			parts = append(parts, fmt.Sprintf("%.0f", rpm))
+		}
+		rpmText = fmt.Sprintf("%s RPM", strings.Join(parts, "/"))
+	}
+
+	cell := "Fan  " + style.Render(spinner) + dimStyle.Render(" ") + style.Render(rpmText)
+	if len(sys.FanHistory) > 0 {
+		cell += " " + buildSparklineStyled(sys.FanHistory, sparkWidth, sys.ActiveBuckets, style)
+	}
+	return cell
 }
 
 func renderBar(pct float64, width int) string {
