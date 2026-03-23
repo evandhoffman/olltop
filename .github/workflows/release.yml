@@ -10,14 +10,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - runner: macos-14     # arm64 (Apple Silicon)
-            arch: arm64
-          - runner: macos-13     # amd64 (Intel)
-            arch: amd64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14  # arm64 Apple Silicon runner
     steps:
       - uses: actions/checkout@v4
 
@@ -25,24 +18,24 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build
-        env:
-          CGO_ENABLED: "1"
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          go build -ldflags "-X main.version=${VERSION}" -o "olltop-darwin-${{ matrix.arch }}" ./cmd/olltop
-
-      - name: Verify binary
-        run: |
-          ./olltop-darwin-${{ matrix.arch }} --version
-
       - name: Run tests
         run: go test ./...
 
+      - name: Build arm64
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: arm64
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          go build -ldflags "-X main.version=${VERSION}" -o olltop-darwin-arm64 ./cmd/olltop
+
+      - name: Verify arm64 binary
+        run: ./olltop-darwin-arm64 --version
+
       - uses: actions/upload-artifact@v4
         with:
-          name: olltop-darwin-${{ matrix.arch }}
-          path: olltop-darwin-${{ matrix.arch }}
+          name: olltop-darwin-arm64
+          path: olltop-darwin-arm64
 
   release:
     needs: build
@@ -85,12 +78,10 @@ jobs:
             Download the binary for your Mac architecture, make it executable, and run with sudo:
 
             ```bash
-            chmod +x olltop-darwin-*
-            sudo ./olltop-darwin-arm64   # Apple Silicon
-            sudo ./olltop-darwin-amd64   # Intel Mac
+            chmod +x olltop-darwin-arm64
+            sudo ./olltop-darwin-arm64
             ```
 
             Running without sudo works but disables tok/s monitoring (requires pcap).
           files: |
             artifacts/olltop-darwin-arm64/olltop-darwin-arm64
-            artifacts/olltop-darwin-amd64/olltop-darwin-amd64
