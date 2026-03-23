@@ -320,6 +320,7 @@ func (m Model) renderModelsTable(inner int) string {
 		colStatus  = 10
 		colExpires = 10
 	)
+	const fixedPrefixWidth = 1 + colModel + 1 + colSize + 1 + colVRAM + 1 + colTokSec + 1 + colTTFT + 1 + colStatus + 1
 
 	// Column headers — highlight the active sort column
 	modelHdr, sizeHdr, vramHdr, tokHdr, ttftHdr, statusHdr, expiresHdr := "MODEL", "SIZE", "VRAM", "tok/s", "TTFT", "STATUS", "EXPIRES"
@@ -334,6 +335,15 @@ func (m Model) renderModelsTable(inner int) string {
 		statusHdr = "STATUS ▼"
 	}
 
+	expiresWidth := colExpires
+	if remaining := inner - fixedPrefixWidth; remaining < expiresWidth {
+		expiresWidth = remaining
+	}
+	if expiresWidth < 0 {
+		expiresWidth = 0
+	}
+	expiresHdr = truncate(expiresHdr, expiresWidth)
+
 	hdr := fmt.Sprintf(" %-*s %-*s %-*s %-*s %-*s %-*s %-*s",
 		colModel, modelHdr,
 		colSize, sizeHdr,
@@ -341,7 +351,7 @@ func (m Model) renderModelsTable(inner int) string {
 		colTokSec, tokHdr,
 		colTTFT, ttftHdr,
 		colStatus, statusHdr,
-		colExpires, expiresHdr)
+		expiresWidth, padRight(expiresHdr, expiresWidth))
 	b.WriteString(m.renderBorderedLine(inner, dimStyle.Render(hdr)))
 	b.WriteByte('\n')
 
@@ -433,7 +443,7 @@ func (m Model) renderModelsTable(inner int) string {
 			" " + padRight(tps, colTokSec) +
 			" " + padRight(ttft, colTTFT) +
 			" " + padRight(status, colStatus) +
-			" " + expires
+			" " + padRight(truncate(expires, expiresWidth), expiresWidth)
 
 		b.WriteString(m.renderBorderedLine(inner, row))
 		b.WriteByte('\n')

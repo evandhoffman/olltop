@@ -239,3 +239,26 @@ func TestModelTableSortBranches(t *testing.T) {
 		t.Fatalf("unexpected empty table output: %q", out)
 	}
 }
+
+func TestRenderModelsTableFitsNarrowWidth(t *testing.T) {
+	m := NewModel("http://localhost:11434")
+	m.snapshot.Models = []metrics.ModelDisplay{{
+		Name:      "qwen3.5:latest",
+		Size:      18_700_000_000,
+		SizeVRAM:  18_700_000_000,
+		ExpiresIn: 4*time.Minute + 4*time.Second,
+		Status:    "idle",
+	}}
+
+	inner := 84
+	out := m.renderModelsTable(inner)
+	for _, line := range strings.Split(out, "\n") {
+		clean := stripAnsi(line)
+		if clean == "" {
+			continue
+		}
+		if got := lipgloss.Width(clean); got > inner+4 {
+			t.Fatalf("line width = %d, want <= %d\n%s", got, inner+4, clean)
+		}
+	}
+}
