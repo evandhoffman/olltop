@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14     # arm64 (Apple Silicon)
+            arch: arm64
+          - runner: macos-13     # amd64 (Intel)
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          go build -ldflags "-X main.version=${VERSION}" -o "olltop-darwin-${{ matrix.arch }}" ./cmd/olltop
+
+      - name: Verify binary
+        run: |
+          ./olltop-darwin-${{ matrix.arch }} --version
+
+      - name: Run tests
+        run: go test ./...
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: olltop-darwin-${{ matrix.arch }}
+          path: olltop-darwin-${{ matrix.arch }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-creatordate | head -2 | tail -1 || echo "")
+          if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$GITHUB_REF_NAME" ]; then
+            CHANGES=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..${GITHUB_REF_NAME}")
+          else
+            CHANGES=$(git log --pretty=format:"- %s (%h)" HEAD~10..HEAD)
+          fi
+          {
+            echo "changes<<EOF"
+            echo "$CHANGES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## Changes
+
+            ${{ steps.changelog.outputs.changes }}
+
+            ## Installation
+
+            Download the binary for your Mac architecture, make it executable, and run with sudo:
+
+            ```bash
+            chmod +x olltop-darwin-*
+            sudo ./olltop-darwin-arm64   # Apple Silicon
+            sudo ./olltop-darwin-amd64   # Intel Mac
+            ```
+
+            Running without sudo works but disables tok/s monitoring (requires pcap).
+          files: |
+            artifacts/olltop-darwin-arm64/olltop-darwin-arm64
+            artifacts/olltop-darwin-amd64/olltop-darwin-amd64
