@@ -32,10 +32,13 @@ jobs:
       - name: Verify arm64 binary
         run: ./olltop-darwin-arm64 --version
 
+      - name: Package as tgz
+        run: tar czf olltop-darwin-arm64.tgz olltop-darwin-arm64
+
       - uses: actions/upload-artifact@v4
         with:
           name: olltop-darwin-arm64
-          path: olltop-darwin-arm64
+          path: olltop-darwin-arm64.tgz
 
   release:
     needs: build
@@ -55,13 +58,13 @@ jobs:
           body: |
             ## Installation
 
-            **Requires macOS on Apple Silicon (arm64).** Download the binary, make it executable, and run:
+            **Requires macOS on Apple Silicon (arm64).** Download, extract, and run:
 
             ```bash
-            chmod +x olltop-darwin-arm64
+            tar xzf olltop-darwin-arm64.tgz
             sudo ./olltop-darwin-arm64
             ```
 
             Running without `sudo` works but disables tok/s monitoring (requires pcap).
           files: |
-            artifacts/olltop-darwin-arm64/olltop-darwin-arm64
+            artifacts/olltop-darwin-arm64/olltop-darwin-arm64.tgz
