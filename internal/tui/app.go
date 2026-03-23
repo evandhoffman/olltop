@@ -402,25 +402,49 @@ func buildSparkline(data []float64, width, activeBuckets int) string {
 
 func (m Model) renderSystem(inner int) string {
 	sys := m.snapshot.SystemInfo
-	cpuBar := renderBar(sys.CPUPercent, 10)
-	cpuPct := fmt.Sprintf("%.0f%%", sys.CPUPercent)
 
-	var gpuSection string
-	if sys.GPUAvail {
-		gpuBar := renderBar(sys.GPUPercent, 10)
-		gpuPct := fmt.Sprintf("%.0f%%", sys.GPUPercent)
-		gpuSection = fmt.Sprintf("  GPU  %s  %-6s", gpuBar, gpuPct)
+	// Line 1: CPU and GPU utilization with temps
+	cpuBar := renderBar(sys.CPUPercent, 10)
+	cpuPart := fmt.Sprintf(" CPU  %s  %-4s", cpuBar, fmt.Sprintf("%.0f%%", sys.CPUPercent))
+	if sys.SensorsAvail && sys.CPUTemp > 0 {
+		cpuPart += dimStyle.Render(fmt.Sprintf(" %.0f°C", sys.CPUTemp))
 	}
 
+	var gpuPart string
+	if sys.GPUAvail {
+		gpuBar := renderBar(sys.GPUPercent, 10)
+		gpuPart = fmt.Sprintf("   GPU  %s  %-4s", gpuBar, fmt.Sprintf("%.0f%%", sys.GPUPercent))
+		if sys.SensorsAvail && sys.GPUTemp > 0 {
+			gpuPart += dimStyle.Render(fmt.Sprintf(" %.0f°C", sys.GPUTemp))
+		}
+	}
+
+	// Line 2: RAM and fans
 	memUsed := formatBytesUint64(sys.MemUsed)
 	memTotal := formatBytesUint64(sys.MemTotal)
 	memPct := fmt.Sprintf("%.0f%%", sys.MemPercent)
+	memPart := fmt.Sprintf(" RAM  %s / %s  (%s)", memUsed, memTotal, memPct)
 
-	line := fmt.Sprintf(" CPU  %s  %-6s%s  RAM  %s / %s  (%s)",
-		cpuBar, cpuPct, gpuSection, memUsed, memTotal, memPct)
+	var fanPart string
+	if sys.SensorsAvail && len(sys.FanSpeeds) > 0 {
+		if len(sys.FanSpeeds) == 1 {
+			fanPart = dimStyle.Render(fmt.Sprintf("   Fan %.0f RPM", sys.FanSpeeds[0]))
+		} else {
+			parts := ""
+			for i, rpm := range sys.FanSpeeds {
+				if i > 0 {
+					parts += "/"
+				}
+				parts += fmt.Sprintf("%.0f", rpm)
+			}
+			fanPart = dimStyle.Render(fmt.Sprintf("   Fans %s RPM", parts))
+		}
+	}
 
 	var b strings.Builder
-	b.WriteString(m.renderBorderedLine(inner, line))
+	b.WriteString(m.renderBorderedLine(inner, cpuPart+gpuPart))
+	b.WriteByte('\n')
+	b.WriteString(m.renderBorderedLine(inner, memPart+fanPart))
 	b.WriteByte('\n')
 	return b.String()
 }

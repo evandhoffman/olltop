@@ -322,6 +322,15 @@ func collectSystemInfo() SystemInfo {
 		info.GPUPercent = float64(gpuStats.DeviceUtilization)
 	}
 
+	// Sensors (temperature, fans via SMC)
+	sensors := getSensorData()
+	info.SensorsAvail = sensors.Available
+	if sensors.Available {
+		info.CPUTemp = sensors.CPUTemp
+		info.GPUTemp = sensors.GPUTemp
+		info.FanSpeeds = sensors.FanSpeeds
+	}
+
 	// Memory
 	vmStat, err := mem.VirtualMemory()
 	if err != nil {
