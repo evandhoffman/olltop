@@ -19,6 +19,9 @@ type SnapshotMsg struct {
 // sparkBlocks are the Unicode block elements used for sparklines (lowest to highest).
 var sparkBlocks = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
+// fanFrames are the animation frames for the spinning fan indicator.
+var fanFrames = []string{"◜", "◝", "◞", "◟"}
+
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 var (
@@ -67,6 +70,9 @@ var (
 
 // ── Model ───────────────────────────────────────────────────────────────────
 
+// tickMsg is sent on each animation tick for fan spinner.
+type tickMsg struct{}
+
 // Model is the bubbletea model for olltop's TUI.
 type Model struct {
 	snapshot metrics.DisplaySnapshot
@@ -74,6 +80,7 @@ type Model struct {
 	width    int
 	height   int
 	quitting bool
+	tick     int // animation frame counter
 }
 
 // NewModel creates a new TUI model bound to the given Ollama host.
@@ -84,9 +91,15 @@ func NewModel(host string) Model {
 	}
 }
 
-// Init satisfies tea.Model. We return nil because snapshots arrive externally.
+func tickCmd() tea.Cmd {
+	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg{}
+	})
+}
+
+// Init satisfies tea.Model. Start the animation ticker.
 func (m Model) Init() tea.Cmd {
-	return nil
+	return tickCmd()
 }
 
 // Update satisfies tea.Model.
@@ -105,6 +118,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SnapshotMsg:
 		m.snapshot = msg.Snapshot
+
+	case tickMsg:
+		m.tick++
+		return m, tickCmd()
 	}
 
 	return m, nil
@@ -453,7 +470,7 @@ func (m Model) renderSystem(inner int) string {
 
 	var fanPart string
 	if sys.SensorsAvail && len(sys.FanSpeeds) > 0 {
-		// Use max fan speed for color
+		// Use max fan speed for color and animation
 		maxRPM := 0.0
 		for _, rpm := range sys.FanSpeeds {
 			if rpm > maxRPM {
@@ -461,9 +478,10 @@ func (m Model) renderSystem(inner int) string {
 			}
 		}
 		style := fanStyle(maxRPM)
+		spinner := m.fanSpinner(maxRPM)
 
 		if len(sys.FanSpeeds) == 1 {
-			fanPart = "   " + dimStyle.Render("Fan ") + style.Render(fmt.Sprintf("%.0f RPM", sys.FanSpeeds[0]))
+			fanPart = "   " + style.Render(spinner) + dimStyle.Render(" Fan ") + style.Render(fmt.Sprintf("%.0f RPM", sys.FanSpeeds[0]))
 		} else {
 			parts := ""
 			for i, rpm := range sys.FanSpeeds {
@@ -472,7 +490,7 @@ func (m Model) renderSystem(inner int) string {
 				}
 				parts += fmt.Sprintf("%.0f", rpm)
 			}
-			fanPart = "   " + dimStyle.Render("Fans ") + style.Render(fmt.Sprintf("%s RPM", parts))
+			fanPart = "   " + style.Render(spinner) + dimStyle.Render(" Fans ") + style.Render(fmt.Sprintf("%s RPM", parts))
 		}
 	}
 
@@ -521,6 +539,19 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm %02ds", m, s)
 	}
 	return fmt.Sprintf("%ds", s)
+}
+
+// fanSpinner returns the current fan animation frame. Higher RPM = faster spin.
+// At 200ms ticks: 0 RPM = no spin, 1000 RPM = slow, 3000+ RPM = every frame.
+func (m Model) fanSpinner(rpm float64) string {
+	if rpm < 100 {
+		return "·" // essentially off
+	}
+	// Speed multiplier: at ~1000 RPM advance every ~4 ticks (0.8s),
+	// at 3000+ RPM advance every tick (0.2s)
+	speed := max(1, int(rpm/1000))
+	frame := (m.tick * speed) % len(fanFrames)
+	return fanFrames[frame]
 }
 
 // padRight pads a (possibly ANSI-styled) string to the given visible width.
