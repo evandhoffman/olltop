@@ -65,4 +65,12 @@ type SystemInfo struct {
 	FanHistory    []float64 // last 5m of max fan RPM
 	ActiveBuckets int       // how many trailing buckets the app has been running for
 	SensorsAvail  bool
+
+	// Static host identity fields (collected once at startup).
+	Hostname     string
+	IPAddress    string
+	Username     string
+	CPUName      string
+	MachineModel string
+	OSVersion    string
 }

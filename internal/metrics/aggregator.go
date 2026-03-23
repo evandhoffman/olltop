@@ -3,12 +3,18 @@ package metrics
 import (
 	"context"
 	"log/slog"
+	"net"
+	"os"
+	"os/exec"
+	"os/user"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/evandhoffman/olltop/internal/capture"
 	"github.com/evandhoffman/olltop/internal/ollama"
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
@@ -75,6 +81,7 @@ type systemSample struct {
 type Aggregator struct {
 	hasCapture bool
 	startedAt  time.Time
+	staticInfo hostStaticInfo
 
 	mu             sync.Mutex
 	latestSnapshot ollama.Snapshot
@@ -90,6 +97,7 @@ func NewAggregator(hasCapture bool) *Aggregator {
 	return &Aggregator{
 		hasCapture:     hasCapture,
 		startedAt:      time.Now(),
+		staticInfo:     collectHostStaticInfo(),
 		modelTokSec:    make(map[string]*modelMetrics),
 		modelStreaming: make(map[string]*streamingState),
 		samples:        make([]sample, 0, sparkBuckets),
@@ -412,6 +420,12 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 	sysInfo.GPUHistory = gpuHist
 	sysInfo.FanHistory = fanHist
 	sysInfo.ActiveBuckets = activeBuckets
+	sysInfo.Hostname = a.staticInfo.hostname
+	sysInfo.IPAddress = a.staticInfo.ipAddress
+	sysInfo.Username = a.staticInfo.username
+	sysInfo.CPUName = a.staticInfo.cpuName
+	sysInfo.MachineModel = a.staticInfo.machineModel
+	sysInfo.OSVersion = a.staticInfo.osVersion
 
 	return DisplaySnapshot{
 		Models:     models,
@@ -595,6 +609,80 @@ func collectSystemInfo() SystemInfo {
 		info.MemUsed = vmStat.Used
 		info.MemTotal = vmStat.Total
 		info.MemPercent = vmStat.UsedPercent
+	}
+
+	return info
+}
+
+// hostStaticInfo holds machine identity fields that don't change at runtime.
+type hostStaticInfo struct {
+	hostname     string
+	ipAddress    string
+	username     string
+	cpuName      string
+	machineModel string
+	osVersion    string
+}
+
+// collectHostStaticInfo gathers static host metadata once at startup.
+func collectHostStaticInfo() hostStaticInfo {
+	info := hostStaticInfo{}
+
+	if h, err := os.Hostname(); err == nil {
+		info.hostname = h
+	}
+
+	// Pick first non-loopback IPv4 address.
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip != nil && ip.To4() != nil {
+					info.ipAddress = ip.String()
+					break
+				}
+			}
+			if info.ipAddress != "" {
+				break
+			}
+		}
+	}
+
+	if u, err := user.Current(); err == nil {
+		info.username = u.Username
+	}
+
+	// CPU brand string via sysctl (macOS).
+	if out, err := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output(); err == nil {
+		info.cpuName = strings.TrimSpace(string(out))
+	} else {
+		// Fallback: gopsutil cpu.Info
+		if cpuInfos, err := cpu.Info(); err == nil && len(cpuInfos) > 0 {
+			info.cpuName = cpuInfos[0].ModelName
+		}
+	}
+
+	// Machine model via sysctl (macOS).
+	if out, err := exec.Command("sysctl", "-n", "hw.model").Output(); err == nil {
+		info.machineModel = strings.TrimSpace(string(out))
+	}
+
+	// OS version via gopsutil host.
+	if hi, err := host.Info(); err == nil {
+		info.osVersion = hi.Platform + " " + hi.PlatformVersion
 	}
 
 	return info

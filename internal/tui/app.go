@@ -264,13 +264,47 @@ func (m Model) renderHeader(w int) string {
 		dashCount = 1
 	}
 
+	border := lipgloss.NewStyle().Foreground(borderColor)
 	var b strings.Builder
-	styled := lipgloss.NewStyle().Foreground(borderColor)
-	b.WriteString(styled.Render("┌─"))
+	b.WriteString(border.Render("┌─"))
 	b.WriteString(left)
-	b.WriteString(styled.Render(" " + strings.Repeat("─", dashCount) + " "))
+	b.WriteString(border.Render(" " + strings.Repeat("─", dashCount) + " "))
 	b.WriteString(right)
-	b.WriteString(styled.Render("─┐"))
+	b.WriteString(border.Render("─┐"))
+
+	// Second line: host identity info
+	b.WriteByte('\n')
+	si := m.snapshot.SystemInfo
+	var parts []string
+	if si.Username != "" && si.Hostname != "" {
+		parts = append(parts, dimStyle.Render(si.Username+"@"+si.Hostname))
+	} else if si.Hostname != "" {
+		parts = append(parts, dimStyle.Render(si.Hostname))
+	}
+	if si.IPAddress != "" {
+		parts = append(parts, dimStyle.Render("("+si.IPAddress+")"))
+	}
+	if si.MachineModel != "" {
+		parts = append(parts, dimStyle.Render(si.MachineModel))
+	}
+	if si.CPUName != "" {
+		parts = append(parts, dimStyle.Render(si.CPUName))
+	}
+	if si.OSVersion != "" {
+		parts = append(parts, dimStyle.Render(si.OSVersion))
+	}
+	infoLine := strings.Join(parts, dimStyle.Render("  ·  "))
+	infoLen := lipgloss.Width(infoLine)
+	inner := w - 4
+	pad := inner - infoLen
+	if pad < 0 {
+		pad = 0
+	}
+	b.WriteString(border.Render("│ "))
+	b.WriteString(infoLine)
+	b.WriteString(strings.Repeat(" ", pad))
+	b.WriteString(border.Render(" │"))
+
 	return b.String()
 }
 
