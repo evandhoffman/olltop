@@ -1,5 +1,6 @@
 # Binaries
 /olltop
+olltop.log
 *.o
 *.test
 
