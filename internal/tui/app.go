@@ -249,6 +249,13 @@ func (m Model) View() string {
 // ── Rendering helpers ───────────────────────────────────────────────────────
 
 func (m Model) renderHeader(w int) string {
+	si := m.snapshot.SystemInfo
+	border := lipgloss.NewStyle().Foreground(borderColor)
+
+	// ── Top border line ──────────────────────────────────────────────────
+	// Left: " olltop"
+	// Middle: user@hostname (IP)  (shown in the dash space)
+	// Right: version  ? help
 	left := headerStyle.Render(" olltop")
 	version := m.snapshot.Version
 	if version == "" {
@@ -256,34 +263,42 @@ func (m Model) renderHeader(w int) string {
 	}
 	right := dimStyle.Render(fmt.Sprintf("%s  %s  ? help ", m.host, version))
 
+	var userHost string
+	if si.Username != "" && si.Hostname != "" {
+		userHost = si.Username + "@" + si.Hostname
+	} else if si.Hostname != "" {
+		userHost = si.Hostname
+	}
+	if si.IPAddress != "" {
+		userHost += " (" + si.IPAddress + ")"
+	}
+	middle := dimStyle.Render(userHost)
+
 	leftLen := lipgloss.Width(left)
+	middleLen := lipgloss.Width(middle)
 	rightLen := lipgloss.Width(right)
 
-	dashCount := w - 2 - leftLen - rightLen - 4
-	if dashCount < 1 {
-		dashCount = 1
+	// dashes fill the gap: ┌─<left> <─…─> <middle> <─…─> <right>─┐
+	totalFixed := 2 + leftLen + 2 + middleLen + 2 + rightLen + 2
+	dashTotal := w - totalFixed
+	if dashTotal < 2 {
+		dashTotal = 2
 	}
+	dashLeft := dashTotal / 2
+	dashRight := dashTotal - dashLeft
 
-	border := lipgloss.NewStyle().Foreground(borderColor)
 	var b strings.Builder
 	b.WriteString(border.Render("┌─"))
 	b.WriteString(left)
-	b.WriteString(border.Render(" " + strings.Repeat("─", dashCount) + " "))
+	b.WriteString(border.Render(" " + strings.Repeat("─", dashLeft) + " "))
+	b.WriteString(middle)
+	b.WriteString(border.Render(" " + strings.Repeat("─", dashRight) + " "))
 	b.WriteString(right)
 	b.WriteString(border.Render("─┐"))
 
-	// Second line: host identity info
+	// ── Second line: hardware / OS info ─────────────────────────────────
 	b.WriteByte('\n')
-	si := m.snapshot.SystemInfo
 	var parts []string
-	if si.Username != "" && si.Hostname != "" {
-		parts = append(parts, dimStyle.Render(si.Username+"@"+si.Hostname))
-	} else if si.Hostname != "" {
-		parts = append(parts, dimStyle.Render(si.Hostname))
-	}
-	if si.IPAddress != "" {
-		parts = append(parts, dimStyle.Render("("+si.IPAddress+")"))
-	}
 	if si.MachineModel != "" {
 		parts = append(parts, dimStyle.Render(si.MachineModel))
 	}
