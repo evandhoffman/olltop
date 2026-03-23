@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,6 +11,33 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/evandhoffman/olltop/internal/metrics"
 )
+
+// SortMode controls the model table sort order.
+type SortMode int
+
+const (
+	SortDefault SortMode = iota // API order
+	SortName                    // alphabetical
+	SortTokSec                  // highest tok/s first
+	SortVRAM                    // largest VRAM first
+	SortStatus                  // running first, then idle
+	sortModeCount               // sentinel for cycling
+)
+
+func (s SortMode) String() string {
+	switch s {
+	case SortName:
+		return "name"
+	case SortTokSec:
+		return "tok/s"
+	case SortVRAM:
+		return "VRAM"
+	case SortStatus:
+		return "status"
+	default:
+		return "default"
+	}
+}
 
 // SnapshotMsg wraps a DisplaySnapshot for delivery as a tea.Msg.
 type SnapshotMsg struct {
@@ -81,6 +109,8 @@ type Model struct {
 	height   int
 	quitting bool
 	tick     int // animation frame counter
+	showHelp bool
+	sortMode SortMode
 }
 
 // NewModel creates a new TUI model bound to the given Ollama host.
@@ -110,6 +140,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "?":
+			m.showHelp = !m.showHelp
+		case "esc":
+			m.showHelp = false
+		case "s":
+			if !m.showHelp {
+				m.sortMode = (m.sortMode + 1) % sortModeCount
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -170,6 +208,10 @@ func (m Model) View() string {
 	// ── Bottom border ───────────────────────────────────────────────────
 	b.WriteString(m.renderBottomBorder(w))
 
+	if m.showHelp {
+		return m.overlayHelp(b.String(), w, m.height)
+	}
+
 	return b.String()
 }
 
@@ -181,7 +223,7 @@ func (m Model) renderHeader(w int) string {
 	if version == "" {
 		version = "v0.x.x"
 	}
-	right := dimStyle.Render(fmt.Sprintf("%s  %s  q to quit ", m.host, version))
+	right := dimStyle.Render(fmt.Sprintf("%s  %s  ? help ", m.host, version))
 
 	leftLen := lipgloss.Width(left)
 	rightLen := lipgloss.Width(right)
@@ -251,13 +293,26 @@ func (m Model) renderModelsTable(inner int) string {
 		colExpires = 10
 	)
 
+	// Column headers — highlight the active sort column
+	modelHdr, sizeHdr, vramHdr, tokHdr, statusHdr, expiresHdr := "MODEL", "SIZE", "VRAM", "tok/s", "STATUS", "EXPIRES"
+	switch m.sortMode {
+	case SortName:
+		modelHdr = "MODEL ▼"
+	case SortTokSec:
+		tokHdr = "tok/s ▼"
+	case SortVRAM:
+		vramHdr = "VRAM ▼"
+	case SortStatus:
+		statusHdr = "STATUS ▼"
+	}
+
 	hdr := fmt.Sprintf(" %-*s %-*s %-*s %-*s %-*s %-*s",
-		colModel, "MODEL",
-		colSize, "SIZE",
-		colVRAM, "VRAM",
-		colTokSec, "tok/s",
-		colStatus, "STATUS",
-		colExpires, "EXPIRES")
+		colModel, modelHdr,
+		colSize, sizeHdr,
+		colVRAM, vramHdr,
+		colTokSec, tokHdr,
+		colStatus, statusHdr,
+		colExpires, expiresHdr)
 	b.WriteString(m.renderBorderedLine(inner, dimStyle.Render(hdr)))
 	b.WriteByte('\n')
 
@@ -269,7 +324,25 @@ func (m Model) renderModelsTable(inner int) string {
 		return b.String()
 	}
 
-	for _, mdl := range m.snapshot.Models {
+	models := make([]metrics.ModelDisplay, len(m.snapshot.Models))
+	copy(models, m.snapshot.Models)
+	switch m.sortMode {
+	case SortName:
+		sort.Slice(models, func(i, j int) bool { return models[i].Name < models[j].Name })
+	case SortTokSec:
+		sort.Slice(models, func(i, j int) bool { return models[i].CurrentTokPerSec > models[j].CurrentTokPerSec })
+	case SortVRAM:
+		sort.Slice(models, func(i, j int) bool { return models[i].SizeVRAM > models[j].SizeVRAM })
+	case SortStatus:
+		sort.Slice(models, func(i, j int) bool {
+			if models[i].Status == models[j].Status {
+				return models[i].Name < models[j].Name
+			}
+			return models[i].Status == "running"
+		})
+	}
+
+	for _, mdl := range models {
 		name := modelNameStyle.Render(truncate(mdl.Name, colModel))
 		size := formatBytes(mdl.Size)
 		vram := formatBytes(mdl.SizeVRAM)
@@ -553,6 +626,123 @@ func (m Model) fanSpinner(rpm float64) string {
 	frame := (m.tick * speed) % len(fanFrames)
 	return fanFrames[frame]
 }
+
+// overlayHelp renders the help box centered over the existing TUI output.
+func (m Model) overlayHelp(base string, width, height int) string {
+	helpLines := []string{
+		"",
+		headerStyle.Render("  Keyboard Shortcuts"),
+		"",
+		"  " + accentStyle.Render("?") + dimStyle.Render("       toggle this help"),
+		"  " + accentStyle.Render("s") + dimStyle.Render("       cycle sort: default → name → tok/s → VRAM → status"),
+		"  " + accentStyle.Render("q") + dimStyle.Render("       quit"),
+		"  " + accentStyle.Render("Esc") + dimStyle.Render("     close help"),
+		"",
+	}
+
+	// Find widest help line for box sizing
+	boxInner := 0
+	for _, l := range helpLines {
+		w := lipgloss.Width(l)
+		if w > boxInner {
+			boxInner = w
+		}
+	}
+	boxInner += 2 // side padding
+
+	styled := lipgloss.NewStyle().Foreground(borderColor)
+
+	var box strings.Builder
+	box.WriteString(styled.Render("┌" + strings.Repeat("─", boxInner) + "┐"))
+	box.WriteByte('\n')
+	for _, l := range helpLines {
+		vis := lipgloss.Width(l)
+		pad := boxInner - vis
+		if pad < 0 {
+			pad = 0
+		}
+		box.WriteString(styled.Render("│") + l + strings.Repeat(" ", pad) + styled.Render("│"))
+		box.WriteByte('\n')
+	}
+	box.WriteString(styled.Render("└" + strings.Repeat("─", boxInner) + "┘"))
+
+	boxStr := box.String()
+	boxLines := strings.Split(boxStr, "\n")
+
+	// Overlay the help box centered on the base output
+	baseLines := strings.Split(base, "\n")
+
+	// Vertical centering
+	startRow := (len(baseLines) - len(boxLines)) / 2
+	if startRow < 1 {
+		startRow = 1
+	}
+
+	// Horizontal centering
+	boxWidth := boxInner + 2 // +2 for border chars
+	startCol := (width - boxWidth) / 2
+	if startCol < 0 {
+		startCol = 0
+	}
+
+	for i, bline := range boxLines {
+		row := startRow + i
+		if row >= len(baseLines) {
+			break
+		}
+		baseLines[row] = placeOverlay(baseLines[row], bline, startCol)
+	}
+
+	return strings.Join(baseLines, "\n")
+}
+
+// placeOverlay places overlay text at a given column position in a base line.
+func placeOverlay(baseLine, overlay string, col int) string {
+	// Convert to runes for proper positioning
+	baseRunes := []rune(stripAnsi(baseLine))
+	baseLen := len(baseRunes)
+
+	// Build: left portion + overlay + right portion
+	left := ""
+	if col > 0 {
+		if col > baseLen {
+			left = string(baseRunes) + strings.Repeat(" ", col-baseLen)
+		} else {
+			left = string(baseRunes[:col])
+		}
+	}
+
+	overlayWidth := lipgloss.Width(overlay)
+	rightStart := col + overlayWidth
+	right := ""
+	if rightStart < baseLen {
+		right = string(baseRunes[rightStart:])
+	}
+
+	return left + overlay + right
+}
+
+// stripAnsi removes ANSI escape sequences from a string.
+func stripAnsi(s string) string {
+	var out strings.Builder
+	inEsc := false
+	for _, r := range s {
+		if r == '\033' {
+			inEsc = true
+			continue
+		}
+		if inEsc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
+}
+
+var accentStyle = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
 
 // padRight pads a (possibly ANSI-styled) string to the given visible width.
 func padRight(s string, width int) string {
