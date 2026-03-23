@@ -623,30 +623,35 @@ func fanStyle(rpm float64) lipgloss.Style {
 func (m Model) renderSystem(inner int) string {
 	sys := m.snapshot.SystemInfo
 	sparkWidth := 8
-	cpuPart := m.renderCPUCell(sys, sparkWidth)
-	gpuPart := m.renderGPUCell(sys, sparkWidth)
-	memPart := m.renderMemoryCell(sys)
-	fanPart := m.renderFanCell(sys, sparkWidth)
-
-	cellWidth := (inner - 2) / 2
-	if cellWidth < 1 {
-		cellWidth = 1
+	lines := []string{
+		m.renderMemoryCell(sys),
+		m.renderCPUCell(sys),
+		m.renderCPUTempCell(sys, sparkWidth),
+		m.renderGPUCell(sys),
+		m.renderGPUTempCell(sys, sparkWidth),
+		m.renderFanCell(sys, sparkWidth),
 	}
 
 	var b strings.Builder
-	b.WriteString(m.renderBorderedLine(inner, padRight(cpuPart, cellWidth)+"  "+gpuPart))
-	b.WriteByte('\n')
-	b.WriteString(m.renderBorderedLine(inner, padRight(memPart, cellWidth)+"  "+fanPart))
-	b.WriteByte('\n')
+	for _, line := range lines {
+		b.WriteString(m.renderBorderedLine(inner, line))
+		b.WriteByte('\n')
+	}
 	return b.String()
 }
 
-func (m Model) renderCPUCell(sys metrics.SystemInfo, sparkWidth int) string {
+func (m Model) renderCPUCell(sys metrics.SystemInfo) string {
 	cpuBar := renderBar(sys.CPUPercent, 10)
-	cell := fmt.Sprintf("CPU  %s  %-4s", cpuBar, fmt.Sprintf("%.0f%%", sys.CPUPercent))
+	return fmt.Sprintf("CPU  %s  %-4s", cpuBar, fmt.Sprintf("%.0f%%", sys.CPUPercent))
+}
+
+func (m Model) renderCPUTempCell(sys metrics.SystemInfo, sparkWidth int) string {
+	if !sys.SensorsAvail || sys.CPUTemp <= 0 {
+		return dimStyle.Render("CPU Temp  —")
+	}
+	style := tempStyle(sys.CPUTemp, 70, 90)
+	cell := fmt.Sprintf("CPU Temp  %s", style.Render(fmt.Sprintf("%.0f°C", sys.CPUTemp)))
 	if sys.SensorsAvail && sys.CPUTemp > 0 {
-		style := tempStyle(sys.CPUTemp, 70, 90)
-		cell += " " + style.Render(fmt.Sprintf("%.0f°C", sys.CPUTemp))
 		if len(sys.CPUHistory) > 0 {
 			cell += " " + buildSparklineStyled(sys.CPUHistory, sparkWidth, sys.ActiveBuckets, style)
 		}
@@ -654,16 +659,26 @@ func (m Model) renderCPUCell(sys metrics.SystemInfo, sparkWidth int) string {
 	return cell
 }
 
-func (m Model) renderGPUCell(sys metrics.SystemInfo, sparkWidth int) string {
+func (m Model) renderGPUCell(sys metrics.SystemInfo) string {
 	if !sys.GPUAvail {
 		return dimStyle.Render("GPU  —")
 	}
 
 	gpuBar := renderBar(sys.GPUPercent, 10)
-	cell := fmt.Sprintf("GPU  %s  %-4s", gpuBar, fmt.Sprintf("%.0f%%", sys.GPUPercent))
+	return fmt.Sprintf("GPU  %s  %-4s", gpuBar, fmt.Sprintf("%.0f%%", sys.GPUPercent))
+}
+
+func (m Model) renderGPUTempCell(sys metrics.SystemInfo, sparkWidth int) string {
+	if !sys.GPUAvail {
+		return dimStyle.Render("GPU Temp  —")
+	}
+	if !sys.SensorsAvail || sys.GPUTemp <= 0 {
+		return dimStyle.Render("GPU Temp  —")
+	}
+
+	style := tempStyle(sys.GPUTemp, 75, 95)
+	cell := fmt.Sprintf("GPU Temp  %s", style.Render(fmt.Sprintf("%.0f°C", sys.GPUTemp)))
 	if sys.SensorsAvail && sys.GPUTemp > 0 {
-		style := tempStyle(sys.GPUTemp, 75, 95)
-		cell += " " + style.Render(fmt.Sprintf("%.0f°C", sys.GPUTemp))
 		if len(sys.GPUHistory) > 0 {
 			cell += " " + buildSparklineStyled(sys.GPUHistory, sparkWidth, sys.ActiveBuckets, style)
 		}
@@ -681,7 +696,7 @@ func (m Model) renderMemoryCell(sys metrics.SystemInfo) string {
 
 func (m Model) renderFanCell(sys metrics.SystemInfo, sparkWidth int) string {
 	if !sys.SensorsAvail || len(sys.FanSpeeds) == 0 {
-		return dimStyle.Render("Fans  —")
+		return dimStyle.Render("Fan  —")
 	}
 
 	maxRPM := 0.0
