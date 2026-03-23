@@ -222,9 +222,8 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 		currentPTPS = promptHist[len(promptHist)-1]
 	}
 
-	// Compute max and window start from samples
+	// Compute max from windowed samples
 	var maxTPS, maxPTPS float64
-	var windowStart time.Time
 	for _, s := range a.samples {
 		if s.tokPS > maxTPS {
 			maxTPS = s.tokPS
@@ -233,8 +232,11 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 			maxPTPS = s.promptPS
 		}
 	}
-	if len(a.samples) > 0 {
-		windowStart = a.samples[0].ts
+
+	// WindowStart = left edge of the sparkline: the later of app start or now-5min
+	windowStart := now.Add(-historyWindow)
+	if a.startedAt.After(windowStart) {
+		windowStart = a.startedAt
 	}
 
 	// How many buckets has the app been alive for?
