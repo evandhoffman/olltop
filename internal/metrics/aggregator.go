@@ -43,10 +43,17 @@ type modelMetrics struct {
 
 // streamingState tracks live streaming data for a model.
 type streamingState struct {
-	liveTokPerSec float64
-	ttft          time.Duration
-	activeStreams  int // number of in-flight requests
-	lastUpdate    time.Time
+	liveTokPerSec      float64
+	ttft               time.Duration
+	ttfr               time.Duration
+	activeStreams       int // number of in-flight requests
+	lastUpdate         time.Time
+	phase              capture.Phase
+	thinkTokenCount    int64
+	thinkDuration      time.Duration
+	thinkTokPerSec     float64
+	responseTokenCount int64
+	responseTokPerSec  float64
 }
 
 // Aggregator merges polling data (ollama.Snapshot) and capture data
@@ -176,13 +183,21 @@ func (a *Aggregator) handleStreamingMetrics(sm capture.StreamingMetrics) {
 	if sm.TTFT > 0 {
 		state.ttft = sm.TTFT
 	}
+	if sm.TTFR > 0 {
+		state.ttfr = sm.TTFR
+	}
+
+	// Phase tracking
+	state.phase = sm.Phase
+	state.thinkTokenCount = sm.ThinkTokenCount
+	state.thinkDuration = sm.ThinkDuration
+	state.thinkTokPerSec = sm.ThinkTokPerSec
+	state.responseTokenCount = sm.ResponseTokenCount
+	state.responseTokPerSec = sm.ResponseTokPerSec
 
 	if sm.Active {
-		// New stream became active — increment if this is a fresh start
-		// We track this simply: active=true means at least 1 stream is active
 		state.activeStreams = max(1, state.activeStreams)
 	} else {
-		// Stream ended
 		state.activeStreams = max(0, state.activeStreams-1)
 		if state.activeStreams == 0 {
 			state.liveTokPerSec = 0
@@ -200,7 +215,10 @@ func (a *Aggregator) handleStreamingMetrics(sm capture.StreamingMetrics) {
 	slog.Debug("streaming metrics update",
 		"model", sm.Model,
 		"live_tps", sm.LiveTokPerSec,
+		"phase", sm.Phase,
+		"think_tokens", sm.ThinkTokenCount,
 		"ttft", sm.TTFT,
+		"ttfr", sm.TTFR,
 		"active", sm.Active,
 		"active_streams", state.activeStreams,
 	)
@@ -259,8 +277,19 @@ func (a *Aggregator) buildSnapshot() DisplaySnapshot {
 				md.LiveTokPerSec = ss.liveTokPerSec
 				md.ActiveRequests = ss.activeStreams
 				md.TTFT = ss.ttft
+				md.TTFR = ss.ttfr
+				md.Phase = string(ss.phase)
+				md.ThinkTokenCount = ss.thinkTokenCount
+				md.ThinkDuration = ss.thinkDuration
+				md.ThinkTokPerSec = ss.thinkTokPerSec
+				md.ResponseTokenCount = ss.responseTokenCount
+				md.ResponseTokPerSec = ss.responseTokPerSec
 				if ss.activeStreams > 0 {
-					md.Status = "running"
+					if ss.phase == capture.PhaseThinking {
+						md.Status = "thinking"
+					} else {
+						md.Status = "running"
+					}
 				}
 			}
 		}

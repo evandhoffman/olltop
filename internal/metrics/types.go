@@ -21,11 +21,20 @@ type ModelDisplay struct {
 	CurrentTokPerSec float64
 	PromptTokPerSec  float64
 	LiveTokPerSec    float64       // real-time tok/s from streaming chunks
-	Status           string        // "running" or "idle"
+	Status           string        // "running", "thinking", or "idle"
 	ExpiresIn        time.Duration
 	Digest           string
 	TTFT             time.Duration // time to first token (most recent request)
+	TTFR             time.Duration // time to first response token (after thinking)
 	ActiveRequests   int           // number of in-flight requests
+
+	// Thinking phase metrics (reasoning models)
+	Phase              string        // "thinking", "responding", or ""
+	ThinkTokenCount    int64
+	ThinkDuration      time.Duration
+	ThinkTokPerSec     float64
+	ResponseTokenCount int64
+	ResponseTokPerSec  float64
 }
 
 // ThroughputInfo contains aggregate throughput data with history for sparklines.

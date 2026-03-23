@@ -45,6 +45,17 @@ func (r *ollamaResponse) hasContent() bool {
 	return false
 }
 
+// getContent returns the text content from this chunk.
+func (r *ollamaResponse) getContent() string {
+	if r.Response != "" {
+		return r.Response
+	}
+	if r.Message != nil {
+		return r.Message.Content
+	}
+	return ""
+}
+
 const (
 	// emitInterval controls how often each stream emits live metrics.
 	emitInterval = 500 * time.Millisecond
@@ -84,11 +95,20 @@ type ollamaStream struct {
 
 	// Per-stream state for live metrics
 	model      string
-	firstChunk time.Time     // when we saw the first chunk (any)
-	firstToken time.Time     // when we saw the first content token
-	tokenCount int64         // tokens received so far
-	recentToks []time.Time   // timestamps of recent tokens for rolling rate
-	lastEmit   time.Time     // last time we emitted streaming metrics
+	firstChunk time.Time   // when we saw the first chunk (any)
+	firstToken time.Time   // when we saw the first content token
+	tokenCount int64       // tokens received so far
+	recentToks []time.Time // timestamps of recent tokens for rolling rate
+	lastEmit   time.Time   // last time we emitted streaming metrics
+
+	// Thinking phase tracking
+	phase             Phase
+	thinkStart        time.Time // when <think> was detected
+	thinkEnd          time.Time // when </think> was detected
+	thinkTokenCount   int64
+	responseTokenCount int64
+	firstResponseToken time.Time // first token after </think>
+	contentBuf        string    // buffer for detecting tags split across chunks
 }
 
 func (f *ollamaStreamFactory) New(net, transport gopacket.Flow) tcpassembly.Stream {
@@ -152,6 +172,8 @@ func (s *ollamaStream) run() {
 
 		// Streaming token chunk
 		if resp.hasContent() {
+			content := resp.getContent()
+
 			if s.firstToken.IsZero() {
 				s.firstToken = now
 				slog.Debug("first token received",
@@ -161,6 +183,17 @@ func (s *ollamaStream) run() {
 			}
 			s.tokenCount++
 			s.recentToks = append(s.recentToks, now)
+
+			// Detect thinking phase transitions
+			s.contentBuf += content
+			s.detectPhaseTransition(now)
+
+			// Count tokens per phase
+			if s.phase == PhaseThinking {
+				s.thinkTokenCount++
+			} else if s.phase == PhaseResponding {
+				s.responseTokenCount++
+			}
 
 			// Emit live metrics periodically
 			if now.Sub(s.lastEmit) >= emitInterval {
@@ -176,6 +209,49 @@ func (s *ollamaStream) run() {
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		slog.Debug("stream scanner error", "error", err, "net", s.net, "transport", s.transport)
+	}
+}
+
+// detectPhaseTransition scans the accumulated content buffer for <think> and </think> tags.
+func (s *ollamaStream) detectPhaseTransition(now time.Time) {
+	// Look for <think> tag to enter thinking phase
+	if s.phase == PhaseNone || s.phase == "" {
+		if idx := strings.Index(s.contentBuf, "<think>"); idx >= 0 {
+			s.phase = PhaseThinking
+			s.thinkStart = now
+			s.contentBuf = s.contentBuf[idx+len("<think>"):]
+			slog.Debug("thinking phase started", "model", s.model)
+		} else {
+			// Keep only last few bytes for partial tag detection
+			if len(s.contentBuf) > 20 {
+				s.contentBuf = s.contentBuf[len(s.contentBuf)-20:]
+			}
+			// If we've seen many tokens without <think>, this isn't a reasoning model
+			if s.tokenCount > 5 {
+				s.phase = PhaseResponding
+				s.firstResponseToken = s.firstToken
+			}
+		}
+	}
+
+	// Look for </think> tag to exit thinking phase
+	if s.phase == PhaseThinking {
+		if idx := strings.Index(s.contentBuf, "</think>"); idx >= 0 {
+			s.phase = PhaseResponding
+			s.thinkEnd = now
+			s.firstResponseToken = now
+			s.contentBuf = s.contentBuf[idx+len("</think>"):]
+			slog.Debug("thinking phase ended",
+				"model", s.model,
+				"think_tokens", s.thinkTokenCount,
+				"think_duration", now.Sub(s.thinkStart).Round(time.Millisecond),
+			)
+		} else {
+			// Keep tail for partial tag matching
+			if len(s.contentBuf) > 20 {
+				s.contentBuf = s.contentBuf[len(s.contentBuf)-20:]
+			}
+		}
 	}
 }
 
@@ -232,20 +308,54 @@ func (s *ollamaStream) emitStreamingUpdate(now time.Time, active bool) {
 		ttft = s.firstToken.Sub(s.firstChunk)
 	}
 
+	// Compute phase-specific metrics
+	var thinkDur time.Duration
+	var thinkTPS, responseTPS float64
+	var ttfr time.Duration
+
+	if !s.thinkStart.IsZero() {
+		if !s.thinkEnd.IsZero() {
+			thinkDur = s.thinkEnd.Sub(s.thinkStart)
+		} else {
+			thinkDur = now.Sub(s.thinkStart) // still thinking
+		}
+		if thinkDur > 0 && s.thinkTokenCount > 0 {
+			thinkTPS = float64(s.thinkTokenCount) / thinkDur.Seconds()
+		}
+	}
+
+	if !s.firstResponseToken.IsZero() {
+		ttfr = s.firstResponseToken.Sub(s.firstChunk)
+		responseDur := now.Sub(s.firstResponseToken)
+		if responseDur > 0 && s.responseTokenCount > 0 {
+			responseTPS = float64(s.responseTokenCount) / responseDur.Seconds()
+		}
+	}
+
 	sm := StreamingMetrics{
-		Model:         s.model,
-		TokenCount:    s.tokenCount,
-		LiveTokPerSec: liveTPS,
-		TTFT:          ttft,
-		Active:        active,
-		Timestamp:     now,
+		Model:              s.model,
+		TokenCount:         s.tokenCount,
+		LiveTokPerSec:      liveTPS,
+		TTFT:               ttft,
+		Active:             active,
+		Timestamp:          now,
+		Phase:              s.phase,
+		ThinkTokenCount:    s.thinkTokenCount,
+		ThinkDuration:      thinkDur,
+		ThinkTokPerSec:     thinkTPS,
+		ResponseTokenCount: s.responseTokenCount,
+		ResponseTokPerSec:  responseTPS,
+		TTFR:               ttfr,
 	}
 
 	slog.Debug("streaming update",
 		"model", sm.Model,
 		"tokens", sm.TokenCount,
 		"live_tps", fmt.Sprintf("%.1f", sm.LiveTokPerSec),
+		"phase", sm.Phase,
+		"think_tokens", sm.ThinkTokenCount,
 		"ttft", sm.TTFT,
+		"ttfr", sm.TTFR,
 		"active", sm.Active,
 	)
 
@@ -263,6 +373,13 @@ func (s *ollamaStream) resetStreamState() {
 	s.tokenCount = 0
 	s.recentToks = s.recentToks[:0]
 	s.lastEmit = time.Time{}
+	s.phase = PhaseNone
+	s.thinkStart = time.Time{}
+	s.thinkEnd = time.Time{}
+	s.thinkTokenCount = 0
+	s.responseTokenCount = 0
+	s.firstResponseToken = time.Time{}
+	s.contentBuf = ""
 }
 
 // Start begins packet capture and TCP reassembly. It blocks until ctx is

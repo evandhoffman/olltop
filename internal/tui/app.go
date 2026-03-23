@@ -396,16 +396,25 @@ func (m Model) renderModelsTable(inner int) string {
 			tps = dimStyle.Render("\u2014")
 		}
 
-		// Status with active request count
+		// Status with active request count and phase
 		var status string
-		if mdl.Status == "running" {
+		thinkingColor := lipgloss.Color("213") // pink/magenta for thinking
+		switch mdl.Status {
+		case "thinking":
+			thinkStyle := lipgloss.NewStyle().Foreground(thinkingColor)
+			if mdl.ActiveRequests > 1 {
+				status = thinkStyle.Render(fmt.Sprintf("think(%d)", mdl.ActiveRequests))
+			} else {
+				status = thinkStyle.Render("thinking")
+			}
+		case "running":
 			runStyle := lipgloss.NewStyle().Foreground(runningColor)
 			if mdl.ActiveRequests > 1 {
 				status = runStyle.Render(fmt.Sprintf("run(%d)", mdl.ActiveRequests))
 			} else {
 				status = runStyle.Render("running")
 			}
-		} else {
+		default:
 			status = lipgloss.NewStyle().Foreground(idleColor).Render("idle")
 		}
 
@@ -418,15 +427,44 @@ func (m Model) renderModelsTable(inner int) string {
 			" " + padRight(status, colStatus) +
 			" " + expires
 
-		// TTFT on a second line if available and model is active
 		b.WriteString(m.renderBorderedLine(inner, row))
 		b.WriteByte('\n')
-		if mdl.TTFT > 0 && mdl.Status == "running" {
-			ttftStr := formatTTFT(mdl.TTFT)
-			detail := " " + strings.Repeat(" ", colModel+1) +
-				dimStyle.Render("TTFT ") + tokSecStyle.Render(ttftStr)
-			b.WriteString(m.renderBorderedLine(inner, detail))
-			b.WriteByte('\n')
+
+		// Detail line for active models: show TTFT, thinking metrics, TTFR
+		if mdl.Status == "thinking" || mdl.Status == "running" {
+			var details []string
+			indent := " " + strings.Repeat(" ", colModel+1)
+			thinkStyle := lipgloss.NewStyle().Foreground(thinkingColor)
+
+			if mdl.TTFT > 0 {
+				details = append(details, dimStyle.Render("TTFT ")+tokSecStyle.Render(formatTTFT(mdl.TTFT)))
+			}
+
+			if mdl.ThinkTokenCount > 0 {
+				thinkInfo := fmt.Sprintf("%d tok", mdl.ThinkTokenCount)
+				if mdl.ThinkDuration > 0 {
+					thinkInfo += fmt.Sprintf(" %s", formatTTFT(mdl.ThinkDuration))
+				}
+				if mdl.ThinkTokPerSec > 0 {
+					thinkInfo += fmt.Sprintf(" %.1f tok/s", mdl.ThinkTokPerSec)
+				}
+				details = append(details, thinkStyle.Render("think ")+dimStyle.Render(thinkInfo))
+			}
+
+			if mdl.TTFR > 0 {
+				details = append(details, dimStyle.Render("TTFR ")+tokSecStyle.Render(formatTTFT(mdl.TTFR)))
+			}
+
+			if mdl.ResponseTokenCount > 0 && mdl.ResponseTokPerSec > 0 {
+				respInfo := fmt.Sprintf("%d tok %.1f tok/s", mdl.ResponseTokenCount, mdl.ResponseTokPerSec)
+				details = append(details, dimStyle.Render("resp ")+tokSecStyle.Render(respInfo))
+			}
+
+			if len(details) > 0 {
+				detail := indent + strings.Join(details, dimStyle.Render("  "))
+				b.WriteString(m.renderBorderedLine(inner, detail))
+				b.WriteByte('\n')
+			}
 		}
 	}
 
