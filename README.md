@@ -6,12 +6,14 @@ A `top`-like terminal UI for monitoring [Ollama](https://ollama.com) with real-t
 ![Go](https://img.shields.io/badge/language-Go-00ADD8)
 [![Release](https://img.shields.io/github/v/release/evandhoffman/olltop)](https://github.com/evandhoffman/olltop/releases)
 
+![olltop screenshot](assets/screenshot.png)
+
 ## What it shows
 
 - **Loaded models** — name, size, VRAM, expiry countdown
 - **Tokens/sec** — generation and prompt eval throughput (requires root)
 - **Sparkline history** — 5-minute sliding window with max tracker
-- **System metrics** — CPU and RAM utilization
+- **System metrics** — CPU, GPU utilization, RAM, temperatures, fan speeds
 - **Status** — running/idle per model based on capture activity
 
 ## How it works
@@ -27,6 +29,9 @@ No proxying, no interception, no modification to Ollama.
 | Generation tok/s | pcap: `eval_count / eval_duration` | **Yes** |
 | Prompt eval tok/s | pcap: `prompt_eval_count / prompt_eval_duration` | **Yes** |
 | CPU %, RAM | gopsutil | No |
+| GPU utilization % | IOKit (AGXAccelerator) | No |
+| CPU/GPU temperature | SMC via IOKit | No |
+| Fan speeds | SMC via IOKit | No |
 
 ## Installation
 
@@ -101,7 +106,6 @@ internal/
 ## Known limitations
 
 - **tok/s only appears after a response completes** — the `eval_count`/`eval_duration` fields are only in the final `"done":true` chunk, not during streaming. Real-time during-generation tracking is a planned enhancement.
-- **No GPU metrics** — requires additional macOS APIs not yet implemented.
 - **Requires root** for tok/s — this is inherent to pcap on loopback.
 
 ## License
