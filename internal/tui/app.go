@@ -103,14 +103,16 @@ type tickMsg struct{}
 
 // Model is the bubbletea model for olltop's TUI.
 type Model struct {
-	snapshot metrics.DisplaySnapshot
-	host     string
-	width    int
-	height   int
-	quitting bool
-	tick     int // animation frame counter
-	showHelp bool
-	sortMode SortMode
+	snapshot      metrics.DisplaySnapshot
+	lastConnected metrics.DisplaySnapshot // last snapshot where Connected=true
+	host          string
+	width         int
+	height        int
+	quitting      bool
+	tick          int // animation frame counter
+	showHelp      bool
+	sortMode      SortMode
+	disconnectedAt time.Time // when we first noticed disconnection
 }
 
 // NewModel creates a new TUI model bound to the given Ollama host.
@@ -155,6 +157,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case SnapshotMsg:
+		if msg.Snapshot.Connected {
+			m.lastConnected = msg.Snapshot
+			m.disconnectedAt = time.Time{}
+		} else if m.snapshot.Connected && !msg.Snapshot.Connected {
+			// Just became disconnected
+			m.disconnectedAt = time.Now()
+		}
 		m.snapshot = msg.Snapshot
 
 	case tickMsg:
@@ -185,7 +194,24 @@ func (m Model) View() string {
 	b.WriteByte('\n')
 
 	if !m.snapshot.Connected {
-		b.WriteString(m.renderDisconnected(w, inner))
+		// Show warning banner
+		b.WriteString(m.renderDisconnectedBanner(inner))
+
+		// If we have last-known state, show it dimmed
+		if len(m.lastConnected.Models) > 0 {
+			b.WriteString(m.renderSectionBorder(w, "Loaded Models"))
+			b.WriteByte('\n')
+			// Temporarily swap in last-known data for rendering
+			saved := m.snapshot
+			m.snapshot = m.lastConnected
+			b.WriteString(m.renderModelsTable(inner))
+			m.snapshot = saved
+
+			b.WriteString(m.renderSectionBorder(w, "System"))
+			b.WriteByte('\n')
+			b.WriteString(m.renderSystem(inner))
+		}
+
 		b.WriteString(m.renderBottomBorder(w))
 		return b.String()
 	}
@@ -269,14 +295,15 @@ func (m Model) renderBorderedLine(inner int, content string) string {
 	return styled.Render("│") + " " + content + strings.Repeat(" ", pad) + " " + styled.Render("│")
 }
 
-func (m Model) renderDisconnected(w, inner int) string {
+func (m Model) renderDisconnectedBanner(inner int) string {
 	var b strings.Builder
-	msg := errorStyle.Render(fmt.Sprintf("Cannot connect to Ollama at %s", m.host))
-	b.WriteString(m.renderBorderedLine(inner, ""))
-	b.WriteByte('\n')
-	b.WriteString(m.renderBorderedLine(inner, msg))
-	b.WriteByte('\n')
-	b.WriteString(m.renderBorderedLine(inner, ""))
+	msg := fmt.Sprintf(" \u26a0 Cannot connect to Ollama at %s", m.host)
+	if !m.disconnectedAt.IsZero() {
+		elapsed := time.Since(m.disconnectedAt).Truncate(time.Second)
+		msg += fmt.Sprintf(" (disconnected %s ago)", elapsed)
+	}
+	msg += " — retrying..."
+	b.WriteString(m.renderBorderedLine(inner, warnStyle.Render(msg)))
 	b.WriteByte('\n')
 	return b.String()
 }
